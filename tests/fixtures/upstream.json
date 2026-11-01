@@ -1,0 +1,22 @@
+{
+  "schema_version": 3,
+  "recording_platform": "darwin-arm64",
+  "repository": "https://github.com/Project-MONAI/model-zoo",
+  "revision": "55fc1da849a70ed35d2900561429c042a86d65de",
+  "bundle_path": "models/renalStructures_UNEST_segmentation",
+  "bundle_version": "0.2.7",
+  "monai_version": "1.6.0",
+  "torch_version": "2.13.0",
+  "files": [
+    "configs/inference.json",
+    "configs/metadata.json",
+    "scripts/__init__.py",
+    "scripts/networks/__init__.py",
+    "scripts/networks/nest/__init__.py",
+    "scripts/networks/nest/utils.py",
+    "scripts/networks/nest_transformer_3D.py",
+    "scripts/networks/patchEmbed3D.py",
+    "scripts/networks/unest.py",
+    "scripts/networks/unest_block.py"
+  ]
+}

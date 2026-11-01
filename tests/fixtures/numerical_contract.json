@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "reference": "Mac upstream fixtures admitted by tests/fixtures/upstream.json; float32 throughout",
+  "qualification": "Bounds revised from a native Metal failure log of the earlier bounds; the revised suite has not been recorded as passing here; released checkpoint unqualified",
+  "reason": "Independent float32 reductions and matrix products round differently. The previous NumPy/Torch control did not reproduce Metal kernels and could not set native ceilings. Revised absolute ceilings round observed native maxima upward to two significant digits, without relative slack near zero. No graph equations or seeded inputs changed.",
+  "measurement": {
+    "execution": "Full suite on Apple Silicon Metal with the earlier bounds: 10 failed, 101 passed, 2 skipped in 6.78s",
+    "window_max_abs_by_tile": [1.5497208e-6, 1.5795231e-6, 1.6093254e-6, 1.4454126e-6, 1.5795231e-6, 1.5348196e-6, 1.6391277e-6, 1.5944242e-6],
+    "predictor_max_abs": 0.00113058,
+    "transformer_levels": "All three unchanged per-level bounds passed; exact native maxima were not logged"
+  },
+  "arrays": {
+    "window": {
+      "dtype": "float32", "shape": [1, 1, 12, 96, 96],
+      "allow_nan": false, "allow_inf": false, "rtol": 0.0,
+      "atol": 1.7e-6
+    },
+    "level_0": {
+      "dtype": "float32", "shape": [1, 8, 6, 6, 6],
+      "allow_nan": false, "allow_inf": false, "rtol": 0.0,
+      "atol": 4.76837158203125e-7
+    },
+    "level_1": {
+      "dtype": "float32", "shape": [1, 16, 6, 6, 6],
+      "allow_nan": false, "allow_inf": false, "rtol": 0.0,
+      "atol": 1.9073486328125e-6
+    },
+    "level_2": {
+      "dtype": "float32", "shape": [1, 32, 6, 6, 6],
+      "allow_nan": false, "allow_inf": false, "rtol": 0.0,
+      "atol": 3.337860107421875e-6
+    },
+    "predictor": {
+      "dtype": "float32", "shape": [1, 4, 9, 11, 13],
+      "allow_nan": false, "allow_inf": false, "rtol": 0.0,
+      "atol": 0.0012
+    }
+  }
+}
