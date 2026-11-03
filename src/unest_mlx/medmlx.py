@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 
 import nibabel as nib_runtime
@@ -121,7 +122,7 @@ def run(
         mask_path.exists() and mask_path.samefile(source)
     ):
         raise InvalidInputError("UNesT output must differ from the input image")
-    if mask_path.exists() and not overwrite:
+    if (mask_path.exists() or mask_path.is_symlink()) and not overwrite:
         raise InvalidInputError(f"{mask_path} already exists; pass overwrite=true to replace it")
     bundle_dir = (
         weights_dir("unest") if weights_path is None
@@ -296,10 +297,8 @@ def write_mask(path: Path, labels: FloatArray, affine: DoubleArray) -> None:
     image.set_sform(affine, code=1)
     image.set_qform(affine, code=1)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Write beside the target and rename, so a failed run never leaves a truncated mask.
-    partial = path.with_name(f".{path.name[: -len('.nii.gz')]}.{os.getpid()}.partial.nii.gz")
-    try:
+    # Keep the staging file private because NiBabel follows links when opening it.
+    with TemporaryDirectory(prefix=".unest-", dir=path.parent) as staging_dir:
+        partial = Path(staging_dir) / path.name
         nib.save(image, partial)
         os.replace(partial, path)
-    finally:
-        partial.unlink(missing_ok=True)
