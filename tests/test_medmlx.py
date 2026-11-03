@@ -46,7 +46,9 @@ def test_run_matches_upstream_pipeline_bitwise(
         assert fixture["saved_codes"].tolist() == [1, 1]
 
 
-@pytest.mark.parametrize("problem", ["bad_suffix", "non_bool_overwrite", "existing_output"])
+@pytest.mark.parametrize(
+    "problem", ["bad_suffix", "non_bool_overwrite", "existing_output", "dangling_output"]
+)
 def test_run_rejects_bad_arguments_before_downloading_weights(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str
 ) -> None:
@@ -63,6 +65,9 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
     if problem == "existing_output":
         output_dir.mkdir()
         (output_dir / medmlx.OUTPUT_NAME).write_bytes(b"kept")
+    elif problem == "dangling_output":
+        output_dir.mkdir()
+        (output_dir / medmlx.OUTPUT_NAME).symlink_to(tmp_path / "missing.nii.gz")
     overwrite = cast(bool, "false") if problem == "non_bool_overwrite" else False
     with pytest.raises(InvalidInputError):
         medmlx.run(image_path=source, output_dir=output_dir, overwrite=overwrite)

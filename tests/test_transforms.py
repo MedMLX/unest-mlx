@@ -1,5 +1,6 @@
 """Bitwise preprocessing, inversion, and writing against seeded upstream MONAI recordings."""
 
+import os
 from pathlib import Path
 from typing import cast
 
@@ -85,3 +86,16 @@ def test_writer_matches_upstream_saved_data_and_grid(case: Case, tmp_path: Path)
     assert np.array_equal(np.asanyarray(image.dataobj), expected["saved"])
     assert np.array_equal(image.affine, expected["saved_affine"])
     assert [int(image.header[key]) for key in ("qform_code", "sform_code")] == [1, 1]
+
+
+def test_writer_does_not_follow_a_staging_symlink(tmp_path: Path) -> None:
+    """A writable output folder cannot redirect the mask write to another file."""
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    (tmp_path / f".mask.{os.getpid()}.partial.nii.gz").symlink_to(victim)
+    path = tmp_path / "mask.nii.gz"
+
+    medmlx.write_mask(path, np.zeros((2, 2, 2), dtype=np.float32), np.eye(4))
+
+    assert victim.read_bytes() == b"keep"
+    assert nib.load(str(path)).shape == (2, 2, 2)
