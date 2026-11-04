@@ -309,13 +309,20 @@ def _sample(values: RealArray, size: tuple[int, ...], grid: list[DoubleArray]) -
 
 
 def _affine_resample(
-    image: RealArray, xform: DoubleArray, spatial_size: tuple[int, ...]
+    image: RealArray,
+    xform: DoubleArray,
+    spatial_size: tuple[int, ...],
+    *,
+    channel_argmax: bool = False,
 ) -> FloatArray:
     """MONAI ``AffineTransform(normalized=False, reverse_indexing=True)`` in float64.
 
     ``image`` is ``(C, D, H, W)``, ``xform`` the 4x4 map from output voxel indices to
     input voxel indices, and ``spatial_size`` the output ``(D, H, W)``. Returns float32
     ``(C, *spatial_size)`` sampled bilinearly, with border values extended.
+    With ``channel_argmax`` each block is rounded to float32 and reduced to its first
+    maximal channel, returning float32 labels ``(1, *spatial_size)`` without storing
+    every resampled channel.
     """
 
     source_size = tuple(int(value) for value in image.shape[1:])
@@ -332,7 +339,8 @@ def _affine_resample(
     # coordinates in a different order than the fused path below.
     small = 4 * depth * height * width * 3 < 400
     values = np.ascontiguousarray(image, dtype=np.float32).reshape(image.shape[0], -1)
-    output = np.empty((image.shape[0], depth, height, width), dtype=np.float32)
+    channels = 1 if channel_argmax else image.shape[0]
+    output = np.empty((channels, depth, height, width), dtype=np.float32)
     rows = max(1, _BLOCK_VOXELS // max(1, height * width))
 
     def resample_block(start: int) -> None:
@@ -350,8 +358,10 @@ def _affine_resample(
                 second = fma(1.0, row[3], base_h * row[1])
                 coordinate = first[:, None, :] + second[None, :, None]
             grid.append(np.broadcast_to(coordinate, (len(block), height, width)))
-        sampled = _sample(values, source_size, grid)
-        output[:, start : start + len(block)] = sampled.astype(np.float32)
+        sampled = _sample(values, source_size, grid).astype(np.float32)
+        output[:, start : start + len(block)] = (
+            np.argmax(sampled, axis=0)[None] if channel_argmax else sampled
+        )
 
     _each_block(range(0, depth, rows), resample_block)
     return output
@@ -374,8 +384,13 @@ def spatial_resample(
     src_affine: DoubleArray,
     dst_affine: DoubleArray,
     spatial_size: tuple[int, ...],
+    *,
+    channel_argmax: bool = False,
 ) -> tuple[FloatArray, DoubleArray]:
     """MONAI ``SpatialResample`` (bilinear, border, float64); returns float32 data and affine.
+
+    ``channel_argmax`` returns float32 ``argmax`` labels ``(1, *spatial_size)`` of the
+    resampled float32 data instead, computed per block (see ``_affine_resample``).
 
     ``image`` is ``(C, X, Y, Z)`` on the grid ``src_affine``; the result is sampled onto
     ``dst_affine`` with ``spatial_size`` voxels. The data is returned unresampled
@@ -393,8 +408,11 @@ def spatial_resample(
         np.allclose(xform, np.eye(len(xform)), atol=AFFINE_TOL) and same_size
     )
     if unchanged:
+        if channel_argmax:
+            return np.argmax(image.astype(np.float32), axis=0)[None].astype(np.float32), src
         return image.astype(np.float32), src
-    return _affine_resample(image, xform, spatial_size), _torch_mm(src, xform)
+    resampled = _affine_resample(image, xform, spatial_size, channel_argmax=channel_argmax)
+    return resampled, _torch_mm(src, xform)
 
 
 # --- orientation --------------------------------------------------------------------
@@ -513,7 +531,7 @@ def _sleef_expf(values: FloatArray) -> FloatArray:
     return np.where(underflow, np.float32(0), u).astype(np.float32)
 
 
-def softmax(logits: FloatArray) -> FloatArray:
+def softmax(logits: FloatArray, *, out: FloatArray | None = None) -> FloatArray:
     """Torch's float32 CPU softmax over the channel axis (axis 0 of ``(C, X, Y, Z)``).
 
     Torch exponentiates eight spatial positions at a time with SLEEF ``exp``; the
@@ -522,7 +540,14 @@ def softmax(logits: FloatArray) -> FloatArray:
 
     logits = np.asarray(logits, dtype=np.float32)
     flat = logits.reshape(logits.shape[0], -1)
-    output = np.empty_like(flat)
+    if out is None:
+        output = np.empty_like(flat)
+    else:
+        # Each block reads its own voxels before writing them, so ``out`` may be
+        # ``logits``; a contiguous buffer keeps the reshape a view of it.
+        if out.shape != logits.shape or out.dtype != np.float32 or not out.flags.c_contiguous:
+            raise ValueError("softmax out must be a C-contiguous float32 array like logits")
+        output = out.reshape(flat.shape)
     vectorized = flat.shape[1] - flat.shape[1] % _VECTOR_LANES
 
     def softmax_block(start: int) -> None:
@@ -566,6 +591,25 @@ def invert(probabilities: FloatArray, geometry: Geometry) -> tuple[FloatArray, D
     return _orientation(resampled, affine, axcodes)
 
 
+def labels_from_probabilities(probabilities: FloatArray, geometry: Geometry) -> FloatArray:
+    """Invert spacing then orientation and take the argmax: ``(X, Y, Z)`` float32 labels.
+
+    Equals ``argmax(invert(probabilities, geometry))``. The argmax runs per resampling
+    block, and orientation, a spatial flip/transpose, then moves one label channel, so
+    the resampled probabilities are never stored on the reader grid.
+    """
+
+    labels, affine = spatial_resample(
+        probabilities,
+        geometry.network_affine,
+        geometry.oriented_affine,
+        geometry.oriented_shape,
+        channel_argmax=True,
+    )
+    axcodes = nib.orientations.aff2axcodes(geometry.original_affine)
+    return _orientation(labels, affine, axcodes)[0][0]
+
+
 def postprocess(logits: FloatArray, geometry: Geometry) -> FloatArray:
     """Softmax, inverse transforms, and argmax; returns float32 labels on the input grid.
 
@@ -576,5 +620,4 @@ def postprocess(logits: FloatArray, geometry: Geometry) -> FloatArray:
 
     if logits.ndim != 4 or tuple(logits.shape[1:]) != geometry.network_shape:
         raise ValueError(f"UNesT logits {logits.shape} do not match {geometry.network_shape}")
-    inverted, _ = invert(softmax(logits), geometry)
-    return np.argmax(inverted, axis=0).astype(np.float32)
+    return labels_from_probabilities(softmax(logits), geometry)

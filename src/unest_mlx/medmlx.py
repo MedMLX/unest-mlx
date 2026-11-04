@@ -145,7 +145,17 @@ def run(
         logits = predictor(network_input[None])
     except RuntimeError as error:
         raise ModelExecutionError(str(error)) from error
-    labels = transforms.postprocess(logits[0], geometry)
+    logits = logits[0]
+    if logits.ndim != 4 or tuple(logits.shape[1:]) != geometry.network_shape:
+        raise ValueError(f"UNesT logits {logits.shape} do not match {geometry.network_shape}")
+    # Softmax into the logits buffer when it is contiguous, then drop the logits so
+    # they are not held alongside the probabilities during resampling.
+    probabilities = transforms.softmax(
+        logits, out=logits if logits.flags.c_contiguous else None
+    )
+    del logits
+    labels = transforms.labels_from_probabilities(probabilities, geometry)
+    del probabilities
     if labels.shape != geometry.original_shape:
         raise ModelExecutionError("UNesT mask does not match the input grid")
     if not set(np.unique(labels).tolist()) <= {label["value"] for label in LABELS}:
