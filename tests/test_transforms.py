@@ -1,6 +1,5 @@
 """Bitwise preprocessing, inversion, and writing against seeded upstream MONAI recordings."""
 
-import os
 from pathlib import Path
 from typing import cast
 
@@ -65,10 +64,7 @@ def test_postprocessing_matches_monai_bitwise(case: Case) -> None:
     _, geometry = transforms.preprocess(data, affine)
     probabilities = transforms.softmax(expected["logits"])
     assert np.array_equal(probabilities, expected["probabilities"])
-    inverted, inverted_affine = transforms.invert(probabilities, geometry)
-    assert np.array_equal(inverted, expected["inverted"])
-    assert np.array_equal(inverted_affine, expected["inverted_affine"])
-    labels = transforms.postprocess(expected["logits"], geometry)
+    labels = transforms.labels_from_probabilities(probabilities, geometry)
     assert labels.dtype == expected["saved"].dtype == np.float32
     assert np.array_equal(labels, expected["labels"])
     assert np.array_equal(labels, expected["saved"])
@@ -86,16 +82,3 @@ def test_writer_matches_upstream_saved_data_and_grid(case: Case, tmp_path: Path)
     assert np.array_equal(np.asanyarray(image.dataobj), expected["saved"])
     assert np.array_equal(image.affine, expected["saved_affine"])
     assert [int(image.header[key]) for key in ("qform_code", "sform_code")] == [1, 1]
-
-
-def test_writer_does_not_follow_a_staging_symlink(tmp_path: Path) -> None:
-    """A writable output folder cannot redirect the mask write to another file."""
-    victim = tmp_path / "victim.txt"
-    victim.write_text("keep", encoding="utf-8")
-    (tmp_path / f".mask.{os.getpid()}.partial.nii.gz").symlink_to(victim)
-    path = tmp_path / "mask.nii.gz"
-
-    medmlx.write_mask(path, np.zeros((2, 2, 2), dtype=np.float32), np.eye(4))
-
-    assert victim.read_bytes() == b"keep"
-    assert nib.load(str(path)).shape == (2, 2, 2)

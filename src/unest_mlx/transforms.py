@@ -462,9 +462,9 @@ def preprocess(data: HostArray, affine: DoubleArray) -> tuple[FloatArray, Geomet
 
     Returns:
         The volume reoriented to RAS, bilinearly resampled to 1 mm spacing and scaled to
-        [0, 1], plus the ``Geometry`` needed by ``postprocess``. An axis whose spacing is
-        already within ``AFFINE_TOL`` of 1 mm keeps its spacing rather than being snapped,
-        as in MONAI's ``Spacing``.
+        [0, 1], plus the ``Geometry`` needed by ``labels_from_probabilities``. An axis
+        whose spacing is already within ``AFFINE_TOL`` of 1 mm keeps its spacing rather
+        than being snapped, as in MONAI's ``Spacing``.
     """
 
     original_affine = np.array(affine, dtype=np.float64, copy=True)
@@ -577,26 +577,13 @@ def softmax(logits: FloatArray, *, out: FloatArray | None = None) -> FloatArray:
     return output.reshape(logits.shape)
 
 
-def invert(probabilities: FloatArray, geometry: Geometry) -> tuple[FloatArray, DoubleArray]:
-    """Invert spacing then orientation (bilinear); returns data and the tracked affine.
-
-    ``probabilities`` is ``(C, *geometry.network_shape)``; the result is on the reader
-    grid, ``(C, *geometry.original_shape)``.
-    """
-
-    resampled, affine = spatial_resample(
-        probabilities, geometry.network_affine, geometry.oriented_affine, geometry.oriented_shape
-    )
-    axcodes = nib.orientations.aff2axcodes(geometry.original_affine)
-    return _orientation(resampled, affine, axcodes)
-
-
 def labels_from_probabilities(probabilities: FloatArray, geometry: Geometry) -> FloatArray:
     """Invert spacing then orientation and take the argmax: ``(X, Y, Z)`` float32 labels.
 
-    Equals ``argmax(invert(probabilities, geometry))``. The argmax runs per resampling
-    block, and orientation, a spatial flip/transpose, then moves one label channel, so
-    the resampled probabilities are never stored on the reader grid.
+    ``probabilities`` is ``(C, *geometry.network_shape)``; the result is on the reader
+    grid. The argmax runs per resampling block, and orientation, a spatial
+    flip/transpose, then moves one label channel, so the resampled probabilities are
+    never stored on the reader grid.
     """
 
     labels, affine = spatial_resample(
@@ -609,15 +596,3 @@ def labels_from_probabilities(probabilities: FloatArray, geometry: Geometry) -> 
     axcodes = nib.orientations.aff2axcodes(geometry.original_affine)
     return _orientation(labels, affine, axcodes)[0][0]
 
-
-def postprocess(logits: FloatArray, geometry: Geometry) -> FloatArray:
-    """Softmax, inverse transforms, and argmax; returns float32 labels on the input grid.
-
-    ``logits`` is ``(C, *geometry.network_shape)`` float32 from the network; the result is
-    ``(X, Y, Z)`` label values on the reader grid. Raises ``ValueError`` if the logits do
-    not match ``geometry.network_shape``.
-    """
-
-    if logits.ndim != 4 or tuple(logits.shape[1:]) != geometry.network_shape:
-        raise ValueError(f"UNesT logits {logits.shape} do not match {geometry.network_shape}")
-    return labels_from_probabilities(softmax(logits), geometry)
