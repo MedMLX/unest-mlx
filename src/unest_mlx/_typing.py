@@ -127,9 +127,6 @@ class NiftiImage(Protocol):
     def set_qform(self, affine: DoubleArray | None, code: int | None = None) -> None:
         """Set the qform affine and optional code."""
         ...
-    def get_data_dtype(self) -> np.dtype[np.generic]:
-        """Return the stored image dtype."""
-        ...
 
 
 class Orientations(Protocol):

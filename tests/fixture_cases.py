@@ -28,7 +28,7 @@ def recording(name: str) -> Path:
     path = FIXTURES / f"{name}.npz"
     if not path.is_file():
         raise FileNotFoundError(
-            f"Missing upstream fixture {path}; regenerate on this Mac as described in README.md"
+            f"Missing upstream fixture {path}"
         )
     return path
 
@@ -268,12 +268,6 @@ def write_runner_case(name: str, path: Path) -> None:
     affine[:3, :3] = case["linear"]
     affine[:3, 3] = rng.uniform(-200, 200, 3)
     _save_nifti(path, data, affine, case["scaling"])
-
-
-def runner_logits(name: str, shape: Sequence[int]) -> FloatArray:
-    """Create deterministic runner logits for a named fixture."""
-    rng = np.random.default_rng(RUNNER_CASES[name]["seed"] + 100)
-    return (rng.standard_normal((4, *shape)) * 3).astype(np.float32)
 
 
 def write_ct_phantom(path: Path, seed: int = 3100) -> None:
