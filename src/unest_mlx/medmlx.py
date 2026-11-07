@@ -53,6 +53,8 @@ MODEL = {
     "label": "Renal structures UNesT segmentation",
     "task": "segmentation",
     "run": "unest_mlx.medmlx:run",
+    # Measured MLX peak for a 478x277x161 contrast CT; larger inputs need more.
+    "peak_memory_gb": 7.3,
     "summary": (
         "Kidney cortex, medulla, and pelvicalyceal system segmentation for one CT "
         "volume with the MONAI renalStructures_UNEST_segmentation 0.2.7 bundle."
