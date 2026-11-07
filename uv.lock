@@ -408,7 +408,7 @@ wheels = [
 
 [[package]]
 name = "unest-mlx"
-version = "0.2.7"
+version = "0.2.8"
 source = { editable = "." }
 dependencies = [
     { name = "medmlx-core" },
@@ -428,7 +428,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "medmlx-core", specifier = "==0.2.6" },
+    { name = "medmlx-core", specifier = ">=0.2.6,<0.3" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.32.4" },
     { name = "monai", marker = "extra == 'dev'", specifier = "==1.6.1" },
     { name = "nibabel", specifier = ">=5.3,<6" },

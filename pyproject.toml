@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "unest-mlx"
-version = "0.2.7"
+version = "0.2.8"
 description = "Segment kidney cortex, medulla and collecting system in contrast-enhanced CT with UNesT and native MLX"
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -38,7 +38,7 @@ authors = [
   { name = "Alfredo Sandoval Jr." },
 ]
 dependencies = [
-  "medmlx-core==0.2.6",
+  "medmlx-core>=0.2.6,<0.3",
   "mlx==0.32.4; platform_system == 'Darwin' and platform_machine == 'arm64'",
   "nibabel>=5.3,<6",
   "numpy>=2.0,<3",
@@ -49,7 +49,7 @@ unest = "unest_mlx.medmlx:MODEL"
 
 [project.urls]
 Homepage = "https://medmlx.org"
-Documentation = "https://github.com/MedMLX/unest-mlx/blob/v0.2.7/README.md"
+Documentation = "https://github.com/MedMLX/unest-mlx/blob/v0.2.8/README.md"
 Repository = "https://github.com/MedMLX/unest-mlx"
 Issues = "https://github.com/MedMLX/unest-mlx/issues"
 Weights = "https://huggingface.co/MedMLX/unest-renal-ct-mlx"
