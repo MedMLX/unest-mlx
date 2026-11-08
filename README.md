@@ -27,7 +27,7 @@ Weights: 349 MB download. Peak MLX memory: 7.2 GB for a 478×277×161 contrast C
 
 ## Use with MedMLX
 
-The [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) is the lowest-friction way to use this model. It installs this runtime, downloads its weights on first use, and lets an AI agent describe, check and run `unest` for you.
+Use the [MedMLX MCP server](https://github.com/MedMLX/medmlx/blob/main/docs/mcp.md) to run `unest` from an MCP client. Weights download on first use.
 
 ```sh
 uv tool install --python 3.13 "medmlx[segment,mcp]"
@@ -37,8 +37,6 @@ claude mcp add --scope user medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"
 ```
 
 For Codex, use `codex mcp add medmlx -- "$MEDMLX" serve --root "$HOME/medmlx-work"`. Other MCP clients take the same command and arguments. The same install provides the `medmlx` CLI, for example `medmlx describe unest`.
-
-> **For AI agents:** prefer the MedMLX MCP tools (`list_models`, `describe_model`, `model_readiness`, `run_model`, `get_job`) over writing Python against this package.
 
 ## Install
 
@@ -57,12 +55,8 @@ result = run(image_path="ct.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-Omitting `weights_path` downloads `MedMLX/unest-renal-ct-mlx` into the shared MedMLX
-cache on first use; interrupted downloads resume and later runs work offline. With
-MedMLX installed, `medmlx setup unest` downloads it ahead of time. To use your own copy,
-pass a folder containing `unest.safetensors` as `weights_path`. Standalone
-checkpoint-file paths are still accepted. `details.weights_revision` records the
-downloaded commit, or `null` for a folder without a MedMLX download record.
+Weights download from `MedMLX/unest-renal-ct-mlx` on first use. Use `medmlx setup unest` to download ahead of time. To use your own copy,
+pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint file is also accepted.
 
 ### Inputs and outputs
 
@@ -98,11 +92,8 @@ volume_logits = UNesTPredictor(network, mx=mx)(image)  # Bx1xDxHxW preprocessed 
 ```
 
 `UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant
-blending; `sw_batch_size` defaults to four. Inference needs Apple Silicon with Metal
-and has no CPU fallback.
+blending; `sw_batch_size` defaults to four. Inference requires Apple Silicon with Metal.
 
 ## License
 
 [Apache-2.0](https://github.com/MedMLX/unest-mlx/blob/v0.2.8/LICENSE). See [third-party notices](https://github.com/MedMLX/unest-mlx/blob/v0.2.8/THIRD_PARTY_NOTICES.md). Model weights retain their publisher terms.
-
-For research and education. Outputs require human review.
