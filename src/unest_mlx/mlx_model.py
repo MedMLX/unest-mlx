@@ -116,7 +116,6 @@ class UNesT:
             ``(B, C, E, E, E)`` with ``E`` divisible by 6 after any pooling. For
             96-cubed windows ``E`` is 24, 12, 6 and ``C`` is 128, 256, 512.
         """
-        mx = self.mx
         prefix = f"nestViT.levels.{level}"
         if level:
             # LayerNorm normalizes the last axis and MLX pooling expects channels-last
@@ -142,12 +141,24 @@ class UNesT:
             qkv = self.mx.reshape(qkv, (batch, blocks, 216, 3, heads, channels // heads))
             qkv = self.mx.transpose(qkv, (3, 0, 4, 1, 2, 5))
             q, k, v = qkv[0], qkv[1], qkv[2]
-            attention = mx.softmax((q @ k.swapaxes(-2, -1)) * (channels // heads) ** -0.5, axis=-1)
+            # Keep the source matmul/scale/softmax arithmetic while evaluating
+            # at most eight independent blocks' score matrices at a time.
+            parts: list[array] = []
+            for start in range(0, blocks, 8):
+                stop = min(start + 8, blocks)
+                attention = self.mx.softmax(
+                    (q[:, :, start:stop] @ k[:, :, start:stop].swapaxes(-2, -1))
+                    * (channels // heads) ** -0.5, axis=-1,
+                )
+                part = attention @ v[:, :, start:stop]
+                self.mx.eval(part)
+                parts.append(part)
+            attended = self.mx.concatenate(parts, axis=2) if len(parts) > 1 else parts[0]
             # The released graph merges heads with the head index varying fastest
             # (head_dim, heads), not the usual (heads, head_dim); trained weights depend
             # on it.
             y = self.mx.reshape(
-                self.mx.transpose(attention @ v, (0, 2, 3, 4, 1)), (batch, blocks, 216, channels)
+                self.mx.transpose(attended, (0, 2, 3, 4, 1)), (batch, blocks, 216, channels),
             )
             x = x + self._linear(y, f"{block}.attn.proj")
             y = self._linear(self._layer_norm(x, f"{block}.norm2"), f"{block}.mlp.fc1")
