@@ -11,8 +11,6 @@ Segment kidney cortex, medulla and collecting system in contrast-enhanced CT wit
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97_Hugging_Face-weights-yellow)](https://huggingface.co/MedMLX/unest-renal-ct-mlx)
 [![MedMLX](https://img.shields.io/badge/MedMLX-runtime-A51C30)](https://github.com/MedMLX/medmlx)
 
-[Model weights](https://huggingface.co/MedMLX/unest-renal-ct-mlx) · [MedMLX](https://github.com/MedMLX/medmlx)
-
 <img src="https://raw.githubusercontent.com/MedMLX/unest-mlx/main/docs/showcase.png" alt="Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view." width="100%">
 
 *Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view.*
@@ -76,14 +74,17 @@ pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint fil
 ### Python API
 
 ```python
-from medmlx_core.runtime import import_mlx
+import mlx.core as mx
+import numpy as np
 from unest_mlx import UNesT, UNesTPredictor, validate_weights
 
-mx = import_mlx()
-weights = validate_weights(payload)  # flat mapping of float32 NumPy arrays
+loaded = mx.load("unest.safetensors")
+weights = validate_weights({key: np.array(value) for key, value in loaded.items()})
 network = UNesT({key: mx.array(value) for key, value in weights.items()}, mx=mx)
-logits = network(windows)  # Bx1x96x96x96 -> Bx4x96x96x96
-volume_logits = UNesTPredictor(network, mx=mx)(image)  # Bx1xDxHxW preprocessed volume
+predictor = UNesTPredictor(network, mx=mx)
+
+volume = np.zeros((1, 1, 96, 96, 96), dtype=np.float32)  # preprocessed CT, Bx1xDxHxW
+logits = predictor(volume)  # NumPy float32, Bx4xDxHxW
 ```
 
 - `UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant blending;
