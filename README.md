@@ -23,7 +23,9 @@ Segment kidney cortex, medulla and collecting system in contrast-enhanced CT wit
 | :--- | :--- |
 | Contrast-enhanced CT · NIfTI | Renal labels on the input grid |
 
-Weights: 349 MB download. Peak MLX memory: 7.2 GB for a 478×277×161 contrast CT.
+| Model | Weights download | Peak MLX memory | Measured on |
+| :--- | ---: | ---: | :--- |
+| `unest` | 349 MB | 7.2 GB | 478×277×161 contrast CT |
 
 ## Use with MedMLX
 
@@ -69,16 +71,22 @@ pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint fil
 | `weights_path` | Optional `.safetensors` file or a folder containing it |
 | `overwrite` | `False` by default; an existing mask is never replaced |
 
-Use arterial or portal-venous contrast-enhanced CT. On the non-contrast scans we
-tried, the kidneys were missed. Spatial units must be millimetres or unspecified;
-metres and microns are not converted.
+- **Input:** arterial or portal-venous contrast-enhanced CT. On the non-contrast scans
+  we tried, the kidneys were missed. Spatial units must be millimetres or unspecified;
+  metres and microns are not converted.
+- **Mask:** float32 labels on the input grid as the NIfTI reader corrects it:
 
-The mask holds float32 labels 0 background, 1 kidney cortex, 2 medulla and 3
-pelvicalyceal system, on the input grid as the NIfTI reader corrects it. `run`
-returns `{"outputs": {"mask": path}, "details": {...}}`, with label counts, shapes,
-orientation, sliding-window settings, MLX device and elapsed time. Invalid inputs
-raise `InvalidInputError`; missing or mismatched weights raise `AssetNotReadyError`
-with the download location.
+  | Label | Structure |
+  | ---: | :--- |
+  | 0 | Background |
+  | 1 | Kidney cortex |
+  | 2 | Medulla |
+  | 3 | Pelvicalyceal system |
+
+- **Return value:** `{"outputs": {"mask": path}, "details": {...}}`, with label counts,
+  shapes, orientation, sliding-window settings, MLX device and elapsed time.
+- **Errors:** invalid inputs raise `InvalidInputError`; missing or mismatched weights
+  raise `AssetNotReadyError` with the download location.
 
 ### Python API
 
@@ -93,8 +101,9 @@ logits = network(windows)  # Bx1x96x96x96 -> Bx4x96x96x96
 volume_logits = UNesTPredictor(network, mx=mx)(image)  # Bx1xDxHxW preprocessed volume
 ```
 
-`UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant
-blending; `sw_batch_size` defaults to four. Inference requires Apple Silicon with Metal.
+- `UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant blending;
+  `sw_batch_size` defaults to four.
+- Inference requires Apple Silicon with Metal.
 
 ## License
 
