@@ -13,7 +13,7 @@ Segment kidney cortex, medulla and collecting system in contrast-enhanced CT wit
 
 [Model weights](https://huggingface.co/MedMLX/unest-renal-ct-mlx) · [MedMLX](https://github.com/MedMLX/medmlx)
 
-<img src="https://raw.githubusercontent.com/MedMLX/unest-mlx/v0.2.8/docs/showcase.png" alt="Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view." width="100%">
+<img src="https://raw.githubusercontent.com/MedMLX/unest-mlx/main/docs/showcase.png" alt="Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view." width="100%">
 
 *Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view.*
 
