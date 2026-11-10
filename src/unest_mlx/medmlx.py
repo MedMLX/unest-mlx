@@ -110,7 +110,8 @@ def run(
             mask exists and ``overwrite`` is false.
         AssetNotReadyError: The weights are missing, unreadable, not ``.safetensors``,
             or do not match the released tensor inventory.
-        ModelExecutionError: The network produced non-finite logits or invalid labels.
+        ModelExecutionError: The network failed, or produced logits of the wrong shape,
+            non-finite logits or invalid labels.
         MissingDependencyError: MLX or its Metal GPU is unavailable (no CPU fallback).
     """
 
@@ -154,7 +155,9 @@ def run(
         raise ModelExecutionError(str(error)) from error
     logits = logits[0]
     if logits.ndim != 4 or tuple(logits.shape[1:]) != geometry.network_shape:
-        raise ValueError(f"UNesT logits {logits.shape} do not match {geometry.network_shape}")
+        raise ModelExecutionError(
+            f"UNesT logits {logits.shape} do not match {geometry.network_shape}"
+        )
     # Softmax into the logits buffer when it is contiguous, then drop the logits so
     # they are not held alongside the probabilities during resampling.
     probabilities = transforms.softmax(
