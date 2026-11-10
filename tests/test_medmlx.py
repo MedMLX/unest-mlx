@@ -23,8 +23,9 @@ nib = cast(NiftiIo, nib_runtime)
 
 
 @pytest.mark.mlx
+@pytest.mark.parametrize("batch_size", [1, 4])
 def test_run_matches_upstream_pipeline_bitwise(
-    tmp_path: Path, mx: NativeRuntime, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, mx: NativeRuntime, monkeypatch: pytest.MonkeyPatch, batch_size: int,
 ) -> None:
     """Run the seeded phantom and compare the saved mask with the recorded upstream pipeline."""
     weights = runner_weights(mlx_weights.required_shapes())
@@ -35,7 +36,11 @@ def test_run_matches_upstream_pipeline_bitwise(
     # Only the expected inventory is reduced; loading, admission, and the graph are real.
     shapes = {key: value.shape for key, value in weights.items()}
     monkeypatch.setattr(mlx_weights, "required_shapes", lambda: dict(shapes))
-    result = medmlx.run(image_path=image, weights_path=str(checkpoint), output_dir=tmp_path / "out")
+    result = medmlx.run(
+        image_path=image, weights_path=str(checkpoint), output_dir=tmp_path / "out",
+        sw_batch_size=batch_size,
+    )
+    assert result["details"]["sliding_window"]["sw_batch_size"] == batch_size
     written = nib.load(result["outputs"]["mask"])
     with np.load(recording("runner_end_to_end"), allow_pickle=False) as fixture:
         info = cast(RunnerMetadata, fixture_metadata(fixture))
@@ -47,7 +52,8 @@ def test_run_matches_upstream_pipeline_bitwise(
 
 
 @pytest.mark.parametrize(
-    "problem", ["bad_suffix", "non_bool_overwrite", "existing_output", "dangling_output"]
+    "problem", ["bad_suffix", "non_bool_overwrite", "existing_output", "dangling_output",
+                "zero_batch", "bool_batch"]
 )
 def test_run_rejects_bad_arguments_before_downloading_weights(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str
@@ -70,7 +76,11 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         (output_dir / medmlx.OUTPUT_NAME).symlink_to(tmp_path / "missing.nii.gz")
     overwrite = cast(bool, "false") if problem == "non_bool_overwrite" else False
     with pytest.raises(InvalidInputError):
-        medmlx.run(image_path=source, output_dir=output_dir, overwrite=overwrite)
+        medmlx.run(
+            image_path=source, output_dir=output_dir, overwrite=overwrite,
+            sw_batch_size=0 if problem == "zero_batch" else cast(int, True)
+            if problem == "bool_batch" else 4,
+        )
 
 
 @pytest.mark.parametrize(

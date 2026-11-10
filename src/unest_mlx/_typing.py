@@ -40,6 +40,12 @@ class NativeRuntime(MlxRuntime, Protocol):
     def softmax(self, x: array, *, axis: int) -> array:
         """Normalize scores along the requested axis."""
         ...
+    def isfinite(self, x: array) -> array:
+        """Return the elementwise finiteness mask."""
+        ...
+    def all(self, x: array) -> array:
+        """Reduce a native Boolean array to one scalar."""
+        ...
 
 
 class NativeOperation(Protocol):

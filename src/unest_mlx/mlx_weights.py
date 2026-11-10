@@ -1,11 +1,18 @@
 """Strict admission of the released renal UNesT 0.2.7 checkpoint."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from medmlx_core.errors import InvalidInputError
 from numpy.typing import NDArray
+
+from unest_mlx._typing import NativeRuntime
+
+if TYPE_CHECKING:
+    from mlx.core import array
 
 
 def required_shapes() -> dict[str, tuple[int, ...]]:
@@ -107,3 +114,31 @@ def validate_weights(
             raise InvalidInputError(f"UNesT requires finite float32 {name} with shape {shape}")
         validated[name] = np.ascontiguousarray(raw, dtype=np.float32)
     return validated
+
+
+def validate_native_weights(
+    payload: Mapping[str, array], *, mx: NativeRuntime,
+) -> dict[str, array]:
+    """Validate native Torch-layout FP32 tensors without copying their buffers.
+
+    Read names, shapes and dtypes before scheduling finite reductions together.
+    Returned values are the original admitted tensors in released inventory order.
+    The public NumPy validator retains its existing owned-host-array contract.
+    """
+    shapes = required_shapes()
+    if set(payload) != set(shapes):
+        raise InvalidInputError("UNesT checkpoint parameter names differ from the released graph")
+    weights: dict[str, array] = {}
+    for name, shape in shapes.items():
+        value = payload[name]
+        if value.shape != shape or value.dtype != mx.float32:
+            raise InvalidInputError(f"UNesT requires finite float32 {name} with shape {shape}")
+        weights[name] = value
+    checks = {name: mx.all(mx.isfinite(value)) for name, value in weights.items()}
+    mx.eval(weights, checks)
+    for name, valid in checks.items():
+        if not bool(valid.item()):
+            raise InvalidInputError(
+                f"UNesT requires finite float32 {name} with shape {shapes[name]}"
+            )
+    return weights

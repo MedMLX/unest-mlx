@@ -75,6 +75,7 @@ def run(
     weights_path: str | os.PathLike[str] | None = None,
     output_dir: str | os.PathLike[str],
     overwrite: bool = False,
+    sw_batch_size: int = SW_BATCH_SIZE,
 ) -> RunResult:
     """Segment kidney cortex, medulla, and pelvicalyceal system in one CT volume.
 
@@ -94,6 +95,8 @@ def run(
         output_dir: Directory for ``mask.nii.gz``; created when the mask is written.
         overwrite: Replace an existing mask in ``output_dir`` (default ``False``);
             input aliases are refused.
+        sw_batch_size: Positive number of windows evaluated together; defaults to
+            the source batch of four. Smaller batches reduce activation residency.
 
     Returns:
         ``{"outputs": {"mask": path}, "details": {...}}``. The mask keeps the input's
@@ -116,6 +119,8 @@ def run(
     source = _require_nifti(image_path)
     if not isinstance(cast(object, overwrite), bool):
         raise InvalidInputError("overwrite must be true or false")
+    if type(sw_batch_size) is not int or sw_batch_size <= 0:
+        raise InvalidInputError("sw_batch_size must be a positive integer")
     directory = Path(output_dir).expanduser().absolute()
     if directory.exists() and not directory.is_dir():
         raise InvalidInputError(f"output_dir is not a directory: {directory}")
@@ -142,7 +147,7 @@ def run(
     from unest_mlx.mlx_predictor import UNesTPredictor
 
     network = _load_network(weights, mx=mx)
-    predictor = UNesTPredictor(network, mx=mx, sw_batch_size=SW_BATCH_SIZE)
+    predictor = UNesTPredictor(network, mx=mx, sw_batch_size=sw_batch_size)
     try:
         logits = predictor(network_input[None])
     except RuntimeError as error:
@@ -178,7 +183,7 @@ def run(
             "network_shape": [int(value) for value in geometry.network_shape],
             "sliding_window": {
                 "roi_size": [96, 96, 96],
-                "sw_batch_size": SW_BATCH_SIZE,
+                "sw_batch_size": sw_batch_size,
                 "overlap": 0.5,
             },
             "mlx_device": str(mx.default_device()),
@@ -282,17 +287,15 @@ def _load_network(path: Path, *, mx: NativeRuntime) -> NativeNetwork:
             hint=_WEIGHTS_HINT,
         )
     try:
-        state = {str(key): cast(HostArray, np.array(value)) for key, value in loaded.items()}
-        weights = mlx_weights.validate_weights(state)
+        state = {str(key): value for key, value in loaded.items()}
+        weights = mlx_weights.validate_native_weights(state, mx=mx)
     except (InvalidInputError, RuntimeError, TypeError, ValueError) as error:
         raise AssetNotReadyError(
             f"UNesT weights do not match the released 0.2.7 checkpoint: {error}",
             reason=f"mismatched {path.name}",
             hint=_WEIGHTS_HINT,
         ) from error
-    arrays = {key: mx.array(value) for key, value in weights.items()}
-    mx.eval(arrays)
-    return UNesT(arrays, mx=mx)
+    return UNesT(weights, mx=mx)
 
 
 def write_mask(path: Path, labels: FloatArray, affine: DoubleArray) -> None:
