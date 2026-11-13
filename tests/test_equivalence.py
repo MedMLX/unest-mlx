@@ -1,6 +1,6 @@
 """Seeded graph comparison against the pinned upstream Torch implementation.
 
-Uses reduced-width random weights and a random input, not the released checkpoint.
+Uses reduced-width seeded weights and an HCC-TACE CT input.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def window_output(mx: NativeRuntime) -> FloatArray:
     shapes = {key: tuple(shape) for key, shape in info["required_shapes"].items()}
     weights = small_weights(shapes, info["weights_seed"])
     network = UNesT({key: mx.array(value) for key, value in weights.items()}, mx=mx)
-    output = network(mx.array(window_input(info["input_seed"])))
+    output = network(mx.array(window_input()))
     mx.eval(output)
     return cast(FloatArray, np.array(output))
 
@@ -44,7 +44,7 @@ def test_full_graph_matches_upstream(window_output: FloatArray) -> None:
         with np.load(recording(f"unest_window_{part}"), allow_pickle=False) as fixture:
             info = cast(WindowMetadata, fixture_metadata(fixture))
             actual = window_output[:, :, info["depth_start"] : info["depth_stop"]]
-            # Metal max 1.64e-6 across all eight tiles; absolute bound 1.7e-6, rtol=0.
+            # Retain the pre-existing absolute bound across all eight tiles.
             assert_upstream_close(actual, fixture["output"], "window")
 
 

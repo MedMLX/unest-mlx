@@ -1,4 +1,4 @@
-"""Seeded synthetic inputs shared by fixture generation and equivalence tests.
+"""Real CT inputs and seeded feature tensors shared by reference tests.
 
 This module generates inputs only; expected values come from the pinned upstream bundle.
 """
@@ -6,6 +6,7 @@ This module generates inputs only; expected values come from the pinned upstream
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from numpy.lib.npyio import NpzFile
 
 from tests._contracts import CommonMetadata, RunnerCase, SourceManifest
-from unest_mlx._typing import DoubleArray, FloatArray, HostArray, NiftiIo
+from unest_mlx._typing import DoubleArray, FloatArray, HostArray, NiftiImage, NiftiIo
 
 if TYPE_CHECKING:
     from mlx.core import array
@@ -23,9 +24,20 @@ import numpy as np
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def ct_path() -> Path:
+    """Return the configured HCC-TACE CT path."""
+    default = Path.home() / ".cache" / "medmlx" / "test-data" / "hcc_063_ct.nii.gz"
+    return Path(os.environ.get("MEDMLX_TEST_CT", str(default)))
+
+
 def recording(name: str) -> Path:
     """Return the recorded fixture path or report that it is missing."""
-    path = FIXTURES / f"{name}.npz"
+    if name.startswith(("runner_", "unest_window_", "unest_predictor_")):
+        default = Path(__file__).resolve().parents[1] / "work" / "real-reference"
+        directory = os.environ.get("MEDMLX_TEST_REFERENCES", str(default))
+        path = Path(directory) / f"{name}.npz"
+    else:
+        path = FIXTURES / f"{name}.npz"
     if not path.is_file():
         raise FileNotFoundError(
             f"Missing upstream fixture {path}"
@@ -82,10 +94,9 @@ def small_weights(shapes: Mapping[str, tuple[int, ...]], seed: int) -> dict[str,
     return weights
 
 
-def window_input(seed: int) -> FloatArray:
-    """Create a seeded float32 UNesT window input."""
-    rng = np.random.default_rng(seed)
-    return rng.standard_normal((1, 1, 96, 96, 96)).astype(np.float32)
+def window_input() -> FloatArray:
+    """Read a real CT window in the network's channel-first layout."""
+    return predictor_input((1, 1, 96, 96, 96))
 
 
 def level_case(level: int, seed: int) -> tuple[dict[str, FloatArray], FloatArray]:
@@ -166,9 +177,21 @@ class DeterministicNetwork[SeedArray: array | FloatArray, SeedDtype]:
         )
 
 
-def predictor_input(seed: int, shape: Sequence[int]) -> FloatArray:
-    """Create a seeded float32 predictor volume."""
-    return np.random.default_rng(seed).standard_normal(shape).astype(np.float32)
+def predictor_input(shape: Sequence[int]) -> FloatArray:
+    """Read one or two HCC-TACE CT crops for channel-first predictor input."""
+    import nibabel as nib_runtime
+
+    if len(shape) != 5 or shape[0] not in (1, 2) or shape[1] != 1:
+        raise ValueError(f"Unsupported CT batch shape {tuple(shape)}")
+    image = cast(NiftiIo, nib_runtime).load(ct_path())
+    data = np.asarray(image.dataobj, dtype=np.float32)
+    depth = 40 if shape[4] <= 59 else 0
+    images = [data[start:start + shape[2], 220:220 + shape[3], depth:depth + shape[4]]
+              for start in (100, 250)[:shape[0]]]
+    values = np.stack(images)[:, None] / np.float32(1024)
+    if values.shape != tuple(shape):
+        raise ValueError(f"CT crop {values.shape} does not match {tuple(shape)}")
+    return values
 
 
 def predictor_weights(shapes: Mapping[str, tuple[int, ...]], seed: int) -> dict[str, FloatArray]:
@@ -187,7 +210,7 @@ def runner_weights(
 ) -> dict[str, FloatArray]:
     """Reduced-width UNesT whose one-channel decoder feature selects all four labels."""
     weights = predictor_weights(shapes, seed)
-    # On the CT phantom each class wins one interval of the decoder feature.
+    # Each class wins one interval of the decoder feature.
     weights["out.conv.conv.weight"] = cast(Float32ArrayConstructor, np.float32)(
         [-30, -10, 10, 30]
     ).reshape(4, 1, 1, 1, 1)
@@ -203,7 +226,7 @@ def _rotation(x: float, y: float, z: float) -> DoubleArray:
     return rx @ ry @ rz
 
 
-# Seeded NIfTI inputs for the bundle transforms: flipped anisotropic CT, an oblique
+# HCC-TACE NIfTI crops for the bundle transforms: flipped anisotropic CT, an oblique
 # permuted grid with intensity scaling, an unchanged 1 mm grid, and a float32 grid
 # whose first spacing is kept because it lies within MONAI's 1e-3 tolerance.
 RUNNER_CASES: dict[str, RunnerCase] = {
@@ -260,38 +283,52 @@ def write_header_case(name: str, path: Path) -> None:
 
 
 def write_runner_case(name: str, path: Path) -> None:
-    """Write a named synthetic runner image case."""
+    """Write an HCC-TACE CT crop with the named NIfTI geometry and encoding."""
+    import nibabel as nib_runtime
+
     case = RUNNER_CASES[name]
     rng = np.random.default_rng(case["seed"])
-    data = (rng.standard_normal(case["shape"]) * 300).astype(case["dtype"])
+    image = cast(NiftiIo, nib_runtime).load(ct_path())
+    shape = case["shape"]
+    data = np.asanyarray(image.dataobj)[150:150 + shape[0], 250:250 + shape[1], 40:40 + shape[2]]
+    if data.shape != shape:
+        raise ValueError(f"CT crop {data.shape} does not match {shape}")
+    if case["scaling"] is not None:
+        slope, intercept = case["scaling"]
+        data = np.rint((data.astype(np.float64) - intercept) / slope)
+    data = data.astype(case["dtype"])
     affine = np.eye(4)
     affine[:3, :3] = case["linear"]
     affine[:3, 3] = rng.uniform(-200, 200, 3)
     _save_nifti(path, data, affine, case["scaling"])
 
 
-def write_ct_phantom(path: Path, seed: int = 3100) -> None:
-    """Flipped anisotropic CT phantom whose 1 mm grid needs two sliding windows."""
-    shape, spacing = (75, 50, 20), np.array([1.6, 1.6, 4.0])
-    grid = np.stack(np.meshgrid(*(np.arange(n) for n in shape), indexing="ij"), -1) * spacing
-    centre = (np.array(shape) - 1) * spacing / 2
-    data = np.full(shape, -1000.0)
-    body = (((grid - centre) / [55, 35, 60]) ** 2).sum(-1) <= 1
-    data[body] = 40.0
-    for side in (-1, 1):
-        kidney = (((grid - centre - [side * 25, 5, 0]) / [9, 14, 20]) ** 2).sum(-1)
-        data[kidney <= 1] = 180.0
-        data[kidney <= 0.3] = 20.0
-    data += np.random.default_rng(seed).normal(0, 15, shape)
-    affine = np.diag([-spacing[0], spacing[1], spacing[2], 1.0])
-    affine[:3, 3] = [60.0, -40.0, 300.0]
-    _save_nifti(path, np.round(data).astype(np.int16), affine, None)
+class NiftiSlicer(Protocol):
+    """Nibabel's spatial slicer updates the affine for a crop."""
+
+    def __getitem__(self, key: tuple[slice, slice, slice]) -> NiftiImage: ...
+
+
+class CroppableNifti(NiftiImage, Protocol):
+    slicer: NiftiSlicer
+
+
+def write_ct_crop(path: Path) -> None:
+    """Write an HCC-TACE CT crop whose 1 mm grid needs two sliding windows."""
+    import nibabel as nib_runtime
+
+    nib = cast(NiftiIo, nib_runtime)
+    image = cast(CroppableNifti, nib.load(ct_path()))
+    crop = image.slicer[100:240, 220:300, 40:60]
+    if crop.shape != (140, 80, 20):
+        raise ValueError(f"Unexpected CT crop shape {crop.shape}")
+    nib.save(crop, path)
 
 
 def _save_nifti(
     path: Path, data: HostArray, affine: DoubleArray, scaling: tuple[float, float] | None
 ) -> None:
-    """Write synthetic image values with their reference affine."""
+    """Write image values with their reference affine and optional scaling."""
     import nibabel as nib_runtime
 
     nib = cast(NiftiIo, nib_runtime)

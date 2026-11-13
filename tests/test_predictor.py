@@ -38,7 +38,7 @@ def test_stand_in_matches_upstream_predictor_path_bitwise(
         network: DeterministicNetwork[array, Dtype] = DeterministicNetwork(
             info["weights_seed"], mx=seed_mx
         )
-        inputs = predictor_input(info["input_seed"], info["input_shape"])
+        inputs = predictor_input(info["input_shape"])
         array = cast(ArrayFactory, mx.array)
         actual = UNesTPredictor(network, mx=mx, sw_batch_size=batch_size)(array(inputs))
         assert actual.dtype == np.float32
@@ -55,8 +55,8 @@ def test_full_unest_matches_upstream_predictor_path(mx: NativeRuntime) -> None:
         weights = predictor_weights(required_shapes(), info["weights_seed"])
         array = cast(ArrayFactory, mx.array)
         network = UNesT({key: array(value) for key, value in weights.items()}, mx=mx)
-        inputs = predictor_input(info["input_seed"], info["input_shape"])
+        inputs = predictor_input(info["input_shape"])
         prediction = UNesTPredictor(network, mx=mx)(inputs)
-        # Metal max 0.00113058; absolute bound 0.0012, rtol=0, for this padded graph.
+        # Retain the existing absolute bound for the padded graph.
         assert_upstream_close(prediction, fixture["output"], "predictor")
         assert_stable_labels(prediction, fixture["output"], "predictor")

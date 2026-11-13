@@ -32,7 +32,6 @@ class InventoryMetadata(CommonMetadata):
 
 class WindowMetadata(InventoryMetadata):
     weights_seed: int
-    input_seed: int
     depth_start: int
     depth_stop: int
 
@@ -44,7 +43,6 @@ class LevelMetadata(CommonMetadata):
 
 class PredictorMetadata(InventoryMetadata):
     weights_seed: int
-    input_seed: int
     input_shape: list[int]
     window_batches: list[int]
 

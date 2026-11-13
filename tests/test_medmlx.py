@@ -1,7 +1,6 @@
 """Public runner checked against the pinned upstream Torch/MONAI pipeline.
 
-The end-to-end case uses a synthetic CT phantom and seeded reduced-width weights, not the
-released checkpoint.
+The end-to-end case uses an HCC-TACE CT crop and seeded reduced-width weights.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import pytest
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
 
 from tests._contracts import RunnerMetadata
-from tests.fixture_cases import fixture_metadata, recording, runner_weights, write_ct_phantom
+from tests.fixture_cases import ct_path, fixture_metadata, recording, runner_weights, write_ct_crop
 from unest_mlx import medmlx, mlx_weights
 from unest_mlx._typing import NativeRuntime, NiftiIo
 
@@ -27,12 +26,12 @@ nib = cast(NiftiIo, nib_runtime)
 def test_run_matches_upstream_pipeline_bitwise(
     tmp_path: Path, mx: NativeRuntime, monkeypatch: pytest.MonkeyPatch, batch_size: int,
 ) -> None:
-    """Run the seeded phantom and compare the saved mask with the recorded upstream pipeline."""
+    """Compare the real CT's saved mask with the recorded upstream pipeline."""
     weights = runner_weights(mlx_weights.required_shapes())
     checkpoint = tmp_path / "unest.safetensors"
     mx.save_safetensors(str(checkpoint), {key: mx.array(value) for key, value in weights.items()})
-    image = tmp_path / "ct_phantom.nii.gz"
-    write_ct_phantom(image)
+    image = tmp_path / "ct_crop.nii.gz"
+    write_ct_crop(image)
     # Only the expected inventory is reduced; loading, admission, and the graph are real.
     shapes = {key: value.shape for key, value in weights.items()}
     monkeypatch.setattr(mlx_weights, "required_shapes", lambda: dict(shapes))
@@ -91,7 +90,15 @@ def test_rejects_missing_or_unconverted_weights(
 ) -> None:
     """Reject missing, non-safetensors or inventory-mismatched weights."""
     image = tmp_path / "image.nii.gz"
-    nib.save(nib.Nifti1Image(np.zeros((4, 5, 6), np.float32), np.eye(4)), str(image))
+    if defect == "mismatched":
+        volume = nib.load(ct_path())
+        crop = np.asanyarray(volume.dataobj)[200:216, 200:216, 40:48]
+        affine = volume.affine.copy()
+        affine[:3, 3] += affine[:3, :3] @ np.array([200, 200, 40])
+        nib.save(nib.Nifti1Image(crop, affine), image)
+    else:
+        # These cases reject the checkpoint before reading the input file.
+        image.touch()
     weights = tmp_path / ("model.pt" if defect == "torch" else f"{defect}.safetensors")
     if defect == "torch":
         weights.write_bytes(b"")

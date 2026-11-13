@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
   "reference": "Mac upstream fixtures admitted by tests/fixtures/upstream.json; float32 throughout",
-  "qualification": "Bounds revised from a native Metal failure log of the earlier bounds; the revised suite has not been recorded as passing here; released checkpoint unqualified",
-  "reason": "Independent float32 reductions and matrix products round differently. The previous NumPy/Torch control did not reproduce Metal kernels and could not set native ceilings. Revised absolute ceilings round observed native maxima upward to two significant digits, without relative slack near zero. No graph equations or seeded inputs changed.",
+  "qualification": "The HCC-TACE CT comparisons pass the existing absolute bounds on Apple Silicon Metal; the released checkpoint is not covered",
+  "reason": "Independent float32 reductions and matrix products round differently. The absolute ceilings were established with earlier seeded inputs and are retained for the real CT comparisons.",
   "measurement": {
-    "execution": "Full suite on Apple Silicon Metal with the earlier bounds: 10 failed, 101 passed, 2 skipped in 6.78s",
+    "execution": "Historical seeded-input run on Apple Silicon Metal with earlier bounds: 10 failed, 101 passed, 2 skipped in 6.78s",
     "window_max_abs_by_tile": [1.5497208e-6, 1.5795231e-6, 1.6093254e-6, 1.4454126e-6, 1.5795231e-6, 1.5348196e-6, 1.6391277e-6, 1.5944242e-6],
     "predictor_max_abs": 0.00113058,
-    "transformer_levels": "All three unchanged per-level bounds passed; exact native maxima were not logged"
+    "transformer_levels": "Historical seeded feature-tensor comparisons passed the existing per-level bounds; exact native maxima were not logged"
   },
   "arrays": {
     "window": {
