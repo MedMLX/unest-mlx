@@ -7,7 +7,7 @@ from os import PathLike
 from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, overload
 
 import numpy as np
-from medmlx_core.outputs import Artifact
+from medmlx_core.outputs import RunResult as _RunResult
 from medmlx_core.typing import MlxRuntime
 from numpy.typing import ArrayLike, NDArray
 
@@ -220,9 +220,5 @@ class RunOutputs(TypedDict):
     mask: str
 
 
-class RunResult(TypedDict):
-    """Return value of ``unest_mlx.medmlx.run``."""
-
-    outputs: RunOutputs
-    artifacts: dict[str, Artifact]
-    details: RunDetails
+# Return value of ``unest_mlx.medmlx.run``.
+type RunResult = _RunResult[RunDetails, RunOutputs]
