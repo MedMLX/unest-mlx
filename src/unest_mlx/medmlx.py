@@ -21,6 +21,7 @@ from typing import cast
 import nibabel as nib_runtime
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecutionError
+from medmlx_core.outputs import artifact
 from medmlx_core.runtime import import_mlx
 from medmlx_core.weights import weights_dir, weights_revision
 from nibabel.filebasedimages import ImageFileError
@@ -99,7 +100,9 @@ def run(
             the source batch of four. Smaller batches reduce activation residency.
 
     Returns:
-        ``{"outputs": {"mask": path}, "details": {...}}``. The mask keeps the input's
+        ``{"outputs": {"mask": path}, "artifacts": {"mask": ...}, "details": {...}}``. The
+        mask artifact is a ``label_map`` in ``image_physical`` space on ``image_path``'s grid,
+        labelled with the four bundle classes (``LABELS``). The mask keeps the input's
         shape and reader affine; upstream header correction may replace a conflicting
         affine with the form matching the header zooms. Like ``SaveImaged`` it stores
         float32 label values 0-3 with sform and qform code 1 and mm spatial units.
@@ -173,6 +176,14 @@ def run(
     write_mask(mask_path, labels, reader_affine)
     return {
         "outputs": {"mask": mask_path.resolve().as_posix()},
+        "artifacts": {
+            "mask": artifact(
+                kind="label_map",
+                coordinate_space="image_physical",
+                grid_of="image_path",
+                labels=[{"value": label["value"], "name": label["name"]} for label in LABELS],
+            )
+        },
         "details": {
             "weights_revision": weights_revision(weights.parent),
             "labels": [cast(Label, dict(label)) for label in LABELS],

@@ -66,8 +66,9 @@ pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint fil
   | 2 | Medulla |
   | 3 | Pelvicalyceal system |
 
-- **Return value:** `{"outputs": {"mask": path}, "details": {...}}`, with label counts,
-  shapes, orientation, sliding-window settings, MLX device and elapsed time.
+- **Return value:** `{"outputs": {"mask": path}, "artifacts": {"mask": ...}, "details": {...}}`.
+  The mask artifact is a label map on the input grid with the four labels above; `details`
+  holds label counts, shapes, orientation, sliding-window settings, MLX device and elapsed time.
 - **Errors:** invalid inputs raise `InvalidInputError`; missing or mismatched weights
   raise `AssetNotReadyError` with the download location.
 

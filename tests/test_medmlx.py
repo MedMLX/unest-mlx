@@ -12,6 +12,7 @@ import nibabel as nib_runtime
 import numpy as np
 import pytest
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
+from medmlx_core.outputs import validate_outputs
 
 from tests._contracts import RunnerMetadata
 from tests.fixture_cases import ct_path, fixture_metadata, recording, runner_weights, write_ct_crop
@@ -40,6 +41,11 @@ def test_run_matches_upstream_pipeline_bitwise(
         sw_batch_size=batch_size,
     )
     assert result["details"]["sliding_window"]["sw_batch_size"] == batch_size
+    mask_artifact = validate_outputs(result).artifacts["mask"]
+    assert (mask_artifact["kind"], mask_artifact.get("grid_of")) == ("label_map", "image_path")
+    assert mask_artifact.get("labels") == [
+        {"value": label["value"], "name": label["name"]} for label in medmlx.LABELS
+    ]
     written = nib.load(result["outputs"]["mask"])
     with np.load(recording("runner_end_to_end"), allow_pickle=False) as fixture:
         info = cast(RunnerMetadata, fixture_metadata(fixture))
