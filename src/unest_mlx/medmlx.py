@@ -15,15 +15,15 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import cast
 
 import nibabel as nib_runtime
 import numpy as np
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecutionError
+from medmlx_core.files import output_targets, publish
 from medmlx_core.outputs import artifact
 from medmlx_core.runtime import import_mlx
-from medmlx_core.weights import weights_dir, weights_revision
+from medmlx_core.weights import model_folder, weights_revision
 from nibabel.filebasedimages import ImageFileError
 
 from unest_mlx._typing import (
@@ -53,7 +53,7 @@ MODEL = {
     "id": "unest",
     "label": "Renal structures UNesT segmentation",
     "task": "segmentation",
-    "run": "unest_mlx.medmlx:run",
+    "run": "unest_mlx.medmlx:segment",
     # Measured MLX peak for a 478x277x161 contrast CT; larger inputs need more.
     "peak_memory_gb": 7.3,
     "summary": (
@@ -70,7 +70,7 @@ _WEIGHTS_HINT = (
 )
 
 
-def run(
+def segment(
     *,
     image_path: str | os.PathLike[str],
     weights_path: str | os.PathLike[str] | None = None,
@@ -91,8 +91,7 @@ def run(
             contrast enhancement. Header slope and intercept are applied on read.
             Spatial units must be mm or unspecified (assumed mm).
         weights_path: Optional model folder containing ``unest.safetensors``.
-            Omit to download and reuse ``MedMLX/unest-renal-ct-mlx`` automatically. Explicit
-            native ``.safetensors`` checkpoint paths are also accepted.
+            Omit to download and reuse ``MedMLX/unest-renal-ct-mlx`` automatically.
         output_dir: Directory for ``mask.nii.gz``; created when the mask is written.
         overwrite: Replace an existing mask in ``output_dir`` (default ``False``);
             input aliases are refused.
@@ -111,8 +110,9 @@ def run(
         InvalidInputError: The image is missing, not a finite 3D NIfTI with a valid
             affine, ``overwrite`` is not a bool, ``output_dir`` is not a directory, or the
             mask exists and ``overwrite`` is false.
-        AssetNotReadyError: The weights are missing, unreadable, not ``.safetensors``,
-            or do not match the released tensor inventory.
+        AssetNotReadyError: ``weights_path`` is not a folder, or its
+            ``unest.safetensors`` is missing, unreadable or does not match the released
+            tensor inventory.
         ModelExecutionError: The network failed, or produced logits of the wrong shape,
             non-finite logits or invalid labels.
         MissingDependencyError: MLX or its Metal GPU is unavailable (no CPU fallback).
@@ -121,27 +121,12 @@ def run(
     started = time.perf_counter()
     # Check every argument before downloading weights or loading MLX.
     source = _require_nifti(image_path)
-    if not isinstance(cast(object, overwrite), bool):
-        raise InvalidInputError("overwrite must be true or false")
     if type(sw_batch_size) is not int or sw_batch_size <= 0:
         raise InvalidInputError("sw_batch_size must be a positive integer")
-    directory = Path(output_dir).expanduser().absolute()
-    if directory.exists() and not directory.is_dir():
-        raise InvalidInputError(f"output_dir is not a directory: {directory}")
-    mask_path = directory / OUTPUT_NAME
-    if mask_path.resolve() == source.resolve() or (
-        mask_path.exists() and mask_path.samefile(source)
-    ):
-        raise InvalidInputError("UNesT output must differ from the input image")
-    if (mask_path.exists() or mask_path.is_symlink()) and not overwrite:
-        raise InvalidInputError(f"{mask_path} already exists; pass overwrite=true to replace it")
-    bundle_dir = (
-        weights_dir("unest") if weights_path is None
-        else Path(weights_path).expanduser()
-    )
-    # Preserve explicit checkpoint-file callers and named cache symlinks.
-    checkpoint = bundle_dir / "unest.safetensors" if bundle_dir.is_dir() else bundle_dir
-    weights = _require_weights(str(checkpoint))
+    mask_path = output_targets(
+        output_dir, {"mask": OUTPUT_NAME}, overwrite=overwrite, inputs=[source]
+    )["mask"]
+    weights = _require_weights(model_folder("unest", weights_path) / "unest.safetensors")
     from unest_mlx import transforms
 
     image, data = read_volume(source)
@@ -173,7 +158,7 @@ def run(
         raise ModelExecutionError("UNesT mask does not match the input grid")
     if not set(np.unique(labels).tolist()) <= {label["value"] for label in LABELS}:
         raise ModelExecutionError("UNesT exported labels outside the bundle contract")
-    write_mask(mask_path, labels, reader_affine)
+    publish({mask_path: lambda partial: write_mask(partial, labels, reader_affine)})
     return {
         "outputs": {"mask": mask_path.resolve().as_posix()},
         "artifacts": {
@@ -313,10 +298,13 @@ def _load_network(path: Path, *, mx: NativeRuntime) -> NativeNetwork:
 
 
 def write_mask(path: Path, labels: FloatArray, affine: DoubleArray) -> None:
-    """Write a label map like MONAI's ``NibabelWriter``, replacing ``path`` atomically.
+    """Write a label map like MONAI's ``NibabelWriter``.
+
+    The runner calls this on a private staging path (see ``medmlx_core.files.publish``),
+    because NiBabel follows links when opening its destination.
 
     Args:
-        path: Destination for the gzip-compressed NIfTI. Parent directories are created.
+        path: Destination for the gzip-compressed NIfTI.
         labels: Label values on the reader grid, stored as float32.
         affine: 4x4 voxel-to-world affine in mm, written as sform and qform with code 1.
     """
@@ -325,9 +313,4 @@ def write_mask(path: Path, labels: FloatArray, affine: DoubleArray) -> None:
     image.header["xyzt_units"] = 2  # NIfTI millimetres; the mask has no time axis.
     image.set_sform(affine, code=1)
     image.set_qform(affine, code=1)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Keep the staging file private because NiBabel follows links when opening it.
-    with TemporaryDirectory(prefix=".unest-", dir=path.parent) as staging_dir:
-        partial = Path(staging_dir) / path.name
-        nib.save(image, partial)
-        os.replace(partial, path)
+    nib.save(image, path)

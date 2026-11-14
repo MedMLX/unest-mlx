@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NoReturn, cast
 
+import medmlx_core.weights as core_weights
 import nibabel as nib_runtime
 import numpy as np
 import pytest
@@ -29,15 +30,16 @@ def test_run_matches_upstream_pipeline_bitwise(
 ) -> None:
     """Compare the real CT's saved mask with the recorded upstream pipeline."""
     weights = runner_weights(mlx_weights.required_shapes())
-    checkpoint = tmp_path / "unest.safetensors"
+    checkpoint = tmp_path / "weights" / "unest.safetensors"
+    checkpoint.parent.mkdir()
     mx.save_safetensors(str(checkpoint), {key: mx.array(value) for key, value in weights.items()})
     image = tmp_path / "ct_crop.nii.gz"
     write_ct_crop(image)
     # Only the expected inventory is reduced; loading, admission, and the graph are real.
     shapes = {key: value.shape for key, value in weights.items()}
     monkeypatch.setattr(mlx_weights, "required_shapes", lambda: dict(shapes))
-    result = medmlx.run(
-        image_path=image, weights_path=str(checkpoint), output_dir=tmp_path / "out",
+    result = medmlx.segment(
+        image_path=image, weights_path=checkpoint.parent, output_dir=tmp_path / "out",
         sw_batch_size=batch_size,
     )
     assert result["details"]["sliding_window"]["sw_batch_size"] == batch_size
@@ -69,7 +71,7 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         """Fail if the download starts before the refusal."""
         raise AssertionError(f"downloaded {model_id} before checking arguments")
 
-    monkeypatch.setattr(medmlx, "weights_dir", download)
+    monkeypatch.setattr(core_weights, "weights_dir", download)
     source = tmp_path / ("scan.txt" if problem == "bad_suffix" else "scan.nii.gz")
     source.write_bytes(b"unread")
     output_dir = tmp_path / "out"
@@ -81,7 +83,7 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         (output_dir / medmlx.OUTPUT_NAME).symlink_to(tmp_path / "missing.nii.gz")
     overwrite = cast(bool, "false") if problem == "non_bool_overwrite" else False
     with pytest.raises(InvalidInputError):
-        medmlx.run(
+        medmlx.segment(
             image_path=source, output_dir=output_dir, overwrite=overwrite,
             sw_batch_size=0 if problem == "zero_batch" else cast(int, True)
             if problem == "bool_batch" else 4,
@@ -89,12 +91,12 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
 
 
 @pytest.mark.parametrize(
-    "defect", ["missing", "torch", pytest.param("mismatched", marks=pytest.mark.mlx)]
+    "defect", ["missing", "torch", "file", pytest.param("mismatched", marks=pytest.mark.mlx)]
 )
 def test_rejects_missing_or_unconverted_weights(
     tmp_path: Path, defect: str, request: pytest.FixtureRequest
 ) -> None:
-    """Reject missing, non-safetensors or inventory-mismatched weights."""
+    """Reject a checkpoint file, a folder without the native checkpoint, or bad tensors."""
     image = tmp_path / "image.nii.gz"
     if defect == "mismatched":
         volume = nib.load(ct_path())
@@ -105,12 +107,15 @@ def test_rejects_missing_or_unconverted_weights(
     else:
         # These cases reject the checkpoint before reading the input file.
         image.touch()
-    weights = tmp_path / ("model.pt" if defect == "torch" else f"{defect}.safetensors")
-    if defect == "torch":
+    folder = tmp_path / "weights"
+    folder.mkdir()
+    weights = folder / ("model.pt" if defect == "torch" else "unest.safetensors")
+    if defect in ("torch", "file"):
         weights.write_bytes(b"")
     elif defect == "mismatched":
         # A checkpoint holding only one of the released tensors fails the strict inventory.
         mx = request.getfixturevalue("mx")
         mx.save_safetensors(str(weights), {"out.conv.conv.bias": mx.zeros((4,))})
+    given = weights if defect == "file" else folder
     with pytest.raises(AssetNotReadyError):
-        medmlx.run(image_path=image, weights_path=weights, output_dir=tmp_path / "out")
+        medmlx.segment(image_path=image, weights_path=given, output_dir=tmp_path / "out")

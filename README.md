@@ -36,14 +36,14 @@ uv pip install "unest-mlx>=0.2.8"
 ## Run
 
 ```python
-from unest_mlx.medmlx import run
+from unest_mlx import segment
 
-result = run(image_path="ct.nii.gz", output_dir="out")
+result = segment(image_path="ct.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
 Weights download from `MedMLX/unest-renal-ct-mlx` on first use. Use `medmlx setup unest` to download ahead of time. To use your own copy,
-pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint file is also accepted.
+pass the folder containing `unest.safetensors` as `weights_path`.
 
 ### Inputs and outputs
 
@@ -51,8 +51,9 @@ pass a folder containing `unest.safetensors` as `weights_path`. A checkpoint fil
 | --- | --- |
 | `image_path` | One 3D CT in NIfTI (`.nii` or `.nii.gz`), in Hounsfield units |
 | `output_dir` | Directory for `mask.nii.gz` |
-| `weights_path` | Optional `.safetensors` file or a folder containing it |
-| `overwrite` | `False` by default; an existing mask is never replaced |
+| `weights_path` | Optional folder containing `unest.safetensors` |
+| `overwrite` | `False` by default, which refuses to replace an existing mask |
+| `sw_batch_size` | Windows per network call, 4 by default; fewer lower peak memory |
 
 - **Input:** arterial or portal-venous contrast-enhanced CT. On the non-contrast scans
   we tried, the kidneys were missed. Spatial units must be millimetres or unspecified;
