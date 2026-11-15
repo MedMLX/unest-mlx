@@ -1,6 +1,6 @@
 """Renal CT segmentation with UNesT in native MLX.
 
-``segment`` runs one CT end to end. Public names load on first access, so
+``run`` runs one CT end to end. Public names load on first access, so
 importing the package (or the medmlx declaration in ``unest_mlx.medmlx``) does
 not import MLX.
 """
@@ -9,7 +9,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from unest_mlx.medmlx import segment as segment
+    from unest_mlx.medmlx import run as run
     from unest_mlx.mlx_model import UNesT as UNesT
     from unest_mlx.mlx_predictor import UNesTPredictor as UNesTPredictor
     from unest_mlx.mlx_weights import required_shapes as required_shapes
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 __version__ = "0.2.8"
 
 _EXPORTS = {
-    "segment": "unest_mlx.medmlx",
+    "run": "unest_mlx.medmlx",
     "UNesT": "unest_mlx.mlx_model",
     "UNesTPredictor": "unest_mlx.mlx_predictor",
     "validate_weights": "unest_mlx.mlx_weights",
@@ -29,7 +29,7 @@ __all__ = [
     "UNesT",
     "UNesTPredictor",
     "required_shapes",
-    "segment",
+    "run",
     "validate_weights",
 ]
 

@@ -53,7 +53,7 @@ MODEL = {
     "id": "unest",
     "label": "Renal structures UNesT segmentation",
     "task": "segmentation",
-    "run": "unest_mlx.medmlx:segment",
+    "run": "unest_mlx.medmlx:run",
     # Measured MLX peak for a 478x277x161 contrast CT; larger inputs need more.
     "peak_memory_gb": 7.3,
     "summary": (
@@ -70,7 +70,7 @@ _WEIGHTS_HINT = (
 )
 
 
-def segment(
+def run(
     *,
     image_path: str | os.PathLike[str],
     weights_path: str | os.PathLike[str] | None = None,

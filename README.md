@@ -36,9 +36,9 @@ uv pip install "unest-mlx>=0.2.8"
 ## Run
 
 ```python
-from unest_mlx import segment
+from unest_mlx import run
 
-result = segment(image_path="ct.nii.gz", output_dir="out")
+result = run(image_path="ct.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 

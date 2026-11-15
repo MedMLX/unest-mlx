@@ -38,7 +38,7 @@ def test_run_matches_upstream_pipeline_bitwise(
     # Only the expected inventory is reduced; loading, admission, and the graph are real.
     shapes = {key: value.shape for key, value in weights.items()}
     monkeypatch.setattr(mlx_weights, "required_shapes", lambda: dict(shapes))
-    result = medmlx.segment(
+    result = medmlx.run(
         image_path=image, weights_path=checkpoint.parent, output_dir=tmp_path / "out",
         sw_batch_size=batch_size,
     )
@@ -83,7 +83,7 @@ def test_run_rejects_bad_arguments_before_downloading_weights(
         (output_dir / medmlx.OUTPUT_NAME).symlink_to(tmp_path / "missing.nii.gz")
     overwrite = cast(bool, "false") if problem == "non_bool_overwrite" else False
     with pytest.raises(InvalidInputError):
-        medmlx.segment(
+        medmlx.run(
             image_path=source, output_dir=output_dir, overwrite=overwrite,
             sw_batch_size=0 if problem == "zero_batch" else cast(int, True)
             if problem == "bool_batch" else 4,
@@ -118,4 +118,4 @@ def test_rejects_missing_or_unconverted_weights(
         mx.save_safetensors(str(weights), {"out.conv.conv.bias": mx.zeros((4,))})
     given = weights if defect == "file" else folder
     with pytest.raises(AssetNotReadyError):
-        medmlx.segment(image_path=image, weights_path=given, output_dir=tmp_path / "out")
+        medmlx.run(image_path=image, weights_path=given, output_dir=tmp_path / "out")
