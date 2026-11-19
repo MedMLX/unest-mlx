@@ -22,6 +22,7 @@ package's scope.
 
 from __future__ import annotations
 
+import itertools
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -308,6 +309,52 @@ def _sample(values: RealArray, size: tuple[int, ...], grid: list[DoubleArray]) -
     return output
 
 
+def _sample_separable(
+    values: FloatArray,
+    size: tuple[int, ...],
+    gx: DoubleArray,
+    gy: DoubleArray,
+    gz: DoubleArray,
+) -> DoubleArray:
+    """``_sample`` for an axis-aligned grid given by 1D coordinates along W, H and D.
+
+    Each voxel gets the same corners, ``(x * y) * z`` weights and corner sum order as
+    ``_sample``, so the result is identical; the corners are gathered from two depth
+    slabs and their x columns instead of one flat index per voxel and corner.
+    """
+
+    depth, height, width = size
+    ix = _source_index(gx, width)
+    iy = _source_index(gy, height)
+    iz = _source_index(gz, depth)
+    x0 = np.floor(ix).astype(np.int64)
+    y0 = np.floor(iy).astype(np.int64)
+    z0 = np.floor(iz).astype(np.int64)
+    xs, ys, zs = (x0, x0 + 1), (y0, y0 + 1), (z0, z0 + 1)
+    wx = ((xs[1] - ix)[None, None, :], (ix - x0)[None, None, :])
+    wy = ((ys[1] - iy)[None, :, None], (iy - y0)[None, :, None])
+    wz = ((zs[1] - iz)[:, None, None], (iz - z0)[:, None, None])
+    volume = values.reshape(values.shape[0], depth, height, width)
+    slabs = [volume.take(np.minimum(z, depth - 1), axis=1) for z in zs]
+    columns = [[slab.take(np.minimum(x, width - 1), axis=3) for x in xs] for slab in slabs]
+    output = np.zeros((values.shape[0], len(gz), len(gy), len(gx)), dtype=np.float64)
+    term = np.empty_like(output)
+    # Same corner order as ``_sample``: z outermost, x fastest.
+    for cz, cy, cx in itertools.product((0, 1), repeat=3):
+        weight = wx[cx] * wy[cy] * wz[cz]
+        inside = ((xs[cx] < width)[None, None, :] & (ys[cy] < height)[None, :, None]) & (
+            zs[cz] < depth
+        )[:, None, None]
+        gathered = columns[cz][cx].take(np.minimum(ys[cy], height - 1), axis=2)
+        # float32 times float64 is evaluated in float64, as the widened gather was;
+        # corners outside the volume contribute +0.0 as in ``_sample``.
+        np.multiply(gathered, weight, out=term)
+        if not inside.all():
+            np.copyto(term, 0.0, where=~inside)
+        output += term
+    return output
+
+
 def _affine_resample(
     image: RealArray,
     xform: DoubleArray,
@@ -338,6 +385,12 @@ def _affine_resample(
     # Below 400 multiply-adds Torch's bmm uses its naive kernel, which accumulates the
     # coordinates in a different order than the fused path below.
     small = 4 * depth * height * width * 3 < 400
+    # With no rotation or shear each coordinate depends on one output axis, so the
+    # fused path's coordinates reduce to 1D vectors (the zero terms add only signed
+    # zeros, which ``_source_index`` maps to the same index).
+    separable = not small and all(
+        theta[row, column] == 0 for row in range(3) for column in range(3) if row != column
+    )
     values = np.ascontiguousarray(image, dtype=np.float32).reshape(image.shape[0], -1)
     channels = 1 if channel_argmax else image.shape[0]
     output = np.empty((channels, depth, height, width), dtype=np.float32)
@@ -346,6 +399,22 @@ def _affine_resample(
     def resample_block(start: int) -> None:
         """Resample one disjoint block of output voxels."""
         block = base_d[start : start + rows]
+        if separable:
+            parts = [
+                (
+                    fma(block[:, None], row[2], base_w[None, :] * row[0]),
+                    fma(1.0, row[3], base_h * row[1]),
+                )
+                for row in theta[:3]
+            ]
+            gx = parts[0][0][0] + parts[0][1][0]
+            gy = parts[1][0][0, 0] + parts[1][1]
+            gz = parts[2][0][:, 0] + parts[2][1][0]
+            sampled = _sample_separable(values, source_size, gx, gy, gz).astype(np.float32)
+            output[:, start : start + len(block)] = (
+                np.argmax(sampled, axis=0)[None] if channel_argmax else sampled
+            )
+            return
         grid: list[DoubleArray] = []
         for row in theta[:3]:
             if small:
