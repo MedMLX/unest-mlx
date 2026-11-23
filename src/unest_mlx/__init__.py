@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from unest_mlx.mlx_weights import required_shapes as required_shapes
     from unest_mlx.mlx_weights import validate_weights as validate_weights
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 _EXPORTS = {
     "run": "unest_mlx.medmlx",
