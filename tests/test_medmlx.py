@@ -14,11 +14,11 @@ import numpy as np
 import pytest
 from medmlx_core.errors import AssetNotReadyError, InvalidInputError
 from medmlx_core.outputs import validate_outputs
+from medmlx_core.typing import MlxRuntime
 
-from tests._contracts import RunnerMetadata
+from tests._contracts import NiftiIo, RunnerMetadata
 from tests.fixture_cases import ct_path, fixture_metadata, recording, runner_weights, write_ct_crop
 from unest_mlx import medmlx, mlx_weights
-from unest_mlx._typing import NativeRuntime, NiftiIo
 
 nib = cast(NiftiIo, nib_runtime)
 
@@ -26,7 +26,7 @@ nib = cast(NiftiIo, nib_runtime)
 @pytest.mark.mlx
 @pytest.mark.parametrize("batch_size", [1, 4])
 def test_run_matches_upstream_pipeline_bitwise(
-    tmp_path: Path, mx: NativeRuntime, monkeypatch: pytest.MonkeyPatch, batch_size: int,
+    tmp_path: Path, mx: MlxRuntime, monkeypatch: pytest.MonkeyPatch, batch_size: int,
 ) -> None:
     """Compare the real CT's saved mask with the recorded upstream pipeline."""
     weights = runner_weights(mlx_weights.required_shapes())

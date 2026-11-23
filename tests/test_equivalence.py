@@ -9,6 +9,7 @@ from typing import cast
 
 import numpy as np
 import pytest
+from medmlx_core.typing import MlxRuntime
 
 from tests._contracts import LevelMetadata, WindowMetadata
 from tests.fixture_cases import (
@@ -20,13 +21,13 @@ from tests.fixture_cases import (
 )
 from tests.numerical import assert_upstream_close
 from unest_mlx import UNesT
-from unest_mlx._typing import FloatArray, NativeRuntime
+from unest_mlx._typing import FloatArray
 
 pytestmark = pytest.mark.mlx
 
 
 @pytest.fixture(scope="module")
-def window_output(mx: NativeRuntime) -> FloatArray:
+def window_output(mx: MlxRuntime) -> FloatArray:
     """Run the seeded native UNesT window fixture."""
     with np.load(recording("unest_window_0"), allow_pickle=False) as fixture:
         info = cast(WindowMetadata, fixture_metadata(fixture))
@@ -49,7 +50,7 @@ def test_full_graph_matches_upstream(window_output: FloatArray) -> None:
 
 
 @pytest.mark.parametrize("level", range(3))
-def test_transformer_levels_match_upstream(level: int, mx: NativeRuntime) -> None:
+def test_transformer_levels_match_upstream(level: int, mx: MlxRuntime) -> None:
     """Compare each native transformer level with the upstream recording."""
     with np.load(recording(f"unest_level_{level}"), allow_pickle=False) as fixture:
         info = cast(LevelMetadata, fixture_metadata(fixture))

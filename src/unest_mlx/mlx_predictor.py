@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 from typing import TYPE_CHECKING, cast
+
+from medmlx_core.typing import HostArray, MlxRuntime
 
 from unest_mlx._typing import (
     FloatArray,
-    HostArray,
     NativeNetwork,
-    NativeRuntime,
-    SlidingWindowNamespace,
 )
 
 if TYPE_CHECKING:
@@ -42,7 +40,7 @@ class UNesTPredictor:
     network_label = "UNesT"
 
     def __init__(
-        self, network: NativeNetwork, *, mx: NativeRuntime, sw_batch_size: int = 4
+        self, network: NativeNetwork, *, mx: MlxRuntime, sw_batch_size: int = 4
     ) -> None:
         """Validate sliding-window controls and initialize the native predictor."""
         if (
@@ -87,9 +85,9 @@ class UNesTPredictor:
             raise InvalidInputError("UNesT input must have shape Bx1xDxHxW")
         if host.dtype != np.float32 or not np.isfinite(host).all():
             raise InvalidInputError(f"{self.network_label} input must be finite float32")
-        sliding = cast(SlidingWindowNamespace, import_module("medmlx_core.sliding_window"))
+        from medmlx_core.sliding_window import sliding_window_inference
 
-        return sliding.sliding_window_inference(
+        return sliding_window_inference(
             cast(FloatArray, host),
             roi_size=(96, 96, 96),
             sw_batch_size=self.sw_batch_size,

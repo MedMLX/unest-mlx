@@ -11,6 +11,11 @@ Conventions: volumes are channel first, ``(C, X, Y, Z)``, where the three spatia
 are the array's own storage axes (after ``preprocess`` they are the RAS axes). Affines
 are float64 4x4 voxel-to-world matrices in millimeters, as in nibabel.
 
+Header correction, orientation, spacing and intensity scaling on the way in come from
+``medmlx_core.transforms``. The inverse resampling with argmax, orientation back to the
+reader grid and the softmax stay here: core's inverse resampling gives the same labels
+but is slower on this runtime's output grids.
+
 MONAI resamples through Torch ``affine_grid`` and ``grid_sample`` in float64.
 The affine arithmetic and vectorized softmax follow the pinned Torch reference
 recorded on macOS arm64 with one thread. The NumPy implementation preserves the
@@ -22,6 +27,7 @@ package's scope.
 
 from __future__ import annotations
 
+import itertools
 import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -30,20 +36,19 @@ from typing import cast
 
 import nibabel as nib_runtime
 import numpy as np
+from medmlx_core import transforms as core_transforms
+from medmlx_core.volumes import Volume
 from numpy.typing import ArrayLike, NDArray
 
 from unest_mlx._typing import (
     DoubleArray,
     FloatArray,
-    HostArray,
-    IntArray,
-    NiftiImage,
-    NiftiIo,
+    Nibabel,
     NumpyFlip,
     RealArray,
 )
 
-nib = cast(NiftiIo, nib_runtime)
+nib = cast(Nibabel, nib_runtime)
 
 AFFINE_TOL = 1e-3
 PIXDIM = (1.0, 1.0, 1.0)
@@ -138,104 +143,6 @@ def _torch_bmm_small(left: DoubleArray, right: DoubleArray) -> DoubleArray:
     return total
 
 
-# --- MONAI affine utilities ---------------------------------------------------------
-
-
-def affine_to_spacing(affine: DoubleArray, rank: int = 3) -> DoubleArray:
-    """Voxel size (mm) per axis: the column norms of the affine's linear block.
-
-    A zero-length column is reported as 1.0, as in MONAI.
-    """
-    block = np.asarray(affine[:rank, :rank], dtype=np.float64)
-    spacing = np.sqrt(np.sum(block * block, axis=0))
-    spacing[spacing == 0] = 1.0
-    return spacing
-
-
-def correct_nifti_header_if_necessary(image: NiftiImage) -> NiftiImage:
-    """MONAI's reader fix for NIfTI zooms that disagree with the affine (in place)."""
-
-    if image.header.get("dim") is None:
-        return image
-    rank = int(image.header["dim"][0])
-    if rank >= 5:
-        return image
-    pixdim = np.asarray(image.header.get_zooms())[:rank]
-    if np.allclose(pixdim, affine_to_spacing(image.affine, rank)):
-        return image
-    if not hasattr(image, "get_sform"):
-        return image
-    sform, qform = image.get_sform(), image.get_qform()
-    sform_mismatch = not np.allclose(affine_to_spacing(sform, rank), pixdim)
-    qform_mismatch = not np.allclose(affine_to_spacing(qform, rank), pixdim)
-    if image.header["sform_code"] != 0:
-        if not sform_mismatch:
-            return image
-        if not qform_mismatch:
-            image.set_sform(image.get_qform())
-            return image
-    if image.header["qform_code"] != 0:
-        if not qform_mismatch:
-            return image
-        if not sform_mismatch:
-            image.set_qform(image.get_sform())
-            return image
-    image.header.set_zooms(affine_to_spacing(image.affine, rank))
-    return image
-
-
-def zoom_affine(affine: DoubleArray, scale: DoubleArray) -> DoubleArray:
-    """MONAI ``zoom_affine(..., diagonal=False)`` for a 4x4 affine."""
-
-    affine = np.array(affine, dtype=float, copy=True)
-    scale_np = np.array(scale, dtype=float, copy=True)
-    norm = affine_to_spacing(affine, rank=len(affine) - 1)
-    scale_np = np.asarray(
-        [value if value > 0 else default for value, default in zip(scale_np, norm, strict=True)]
-    )
-    scale_np[scale_np == 0] = 1.0
-    rzs = affine[:-1, :-1]
-    zs = np.linalg.cholesky(rzs.T @ rzs).T
-    rotation = rzs @ np.linalg.inv(zs)
-    signed = np.sign(np.diag(zs)) * np.abs(scale_np)
-    new_affine = np.eye(len(affine))
-    new_affine[:-1, :-1] = rotation @ np.diag(signed)
-    return new_affine
-
-
-def compute_shape_offset(
-    spatial_shape: tuple[int, ...], in_affine: DoubleArray, out_affine: DoubleArray
-) -> tuple[IntArray, DoubleArray]:
-    """MONAI ``compute_shape_offset(..., scale_extent=False)``."""
-
-    shape = np.array(tuple(spatial_shape), copy=True, dtype=float)
-    in_affine_ = np.array(in_affine, dtype=np.float64, copy=True)
-    out_affine_ = np.array(out_affine, dtype=np.float64, copy=True)
-    in_coords = [(0.0, dim - 1.0) for dim in shape]
-    corners = cast(DoubleArray, np.asarray(np.meshgrid(*in_coords, indexing="ij"))).reshape(
-        (len(shape), -1)
-    )
-    corners = np.concatenate((corners, np.ones_like(corners[:1])))
-    corners_out = np.linalg.solve(out_affine_, in_affine_) @ corners
-    corners = in_affine_ @ corners
-    all_dist = corners_out[:-1].copy()
-    corners_out = corners_out[:-1] / corners_out[-1]
-    out_shape = np.round(cast(DoubleArray, np.ptp(corners_out, axis=1)) + 1.0)
-    offset = None
-    for index in range(corners.shape[1]):
-        min_corner = np.min(all_dist - all_dist[:, index : index + 1], 1)
-        if np.allclose(min_corner, 0.0, rtol=AFFINE_TOL):
-            offset = corners[:-1, index]
-            break
-    if offset is None:
-        offset = (
-            in_affine_[:-1, :-1] @ (shape / 2.0)
-            + in_affine_[:-1, -1]
-            - out_affine_[:-1, :-1] @ (out_shape / 2.0)
-        )
-    return out_shape.astype(int, copy=False), offset
-
-
 # --- resampling ---------------------------------------------------------------------
 
 
@@ -308,6 +215,52 @@ def _sample(values: RealArray, size: tuple[int, ...], grid: list[DoubleArray]) -
     return output
 
 
+def _sample_separable(
+    values: FloatArray,
+    size: tuple[int, ...],
+    gx: DoubleArray,
+    gy: DoubleArray,
+    gz: DoubleArray,
+) -> DoubleArray:
+    """``_sample`` for an axis-aligned grid given by 1D coordinates along W, H and D.
+
+    Each voxel gets the same corners, ``(x * y) * z`` weights and corner sum order as
+    ``_sample``, so the result is identical; the corners are gathered from two depth
+    slabs and their x columns instead of one flat index per voxel and corner.
+    """
+
+    depth, height, width = size
+    ix = _source_index(gx, width)
+    iy = _source_index(gy, height)
+    iz = _source_index(gz, depth)
+    x0 = np.floor(ix).astype(np.int64)
+    y0 = np.floor(iy).astype(np.int64)
+    z0 = np.floor(iz).astype(np.int64)
+    xs, ys, zs = (x0, x0 + 1), (y0, y0 + 1), (z0, z0 + 1)
+    wx = ((xs[1] - ix)[None, None, :], (ix - x0)[None, None, :])
+    wy = ((ys[1] - iy)[None, :, None], (iy - y0)[None, :, None])
+    wz = ((zs[1] - iz)[:, None, None], (iz - z0)[:, None, None])
+    volume = values.reshape(values.shape[0], depth, height, width)
+    slabs = [volume.take(np.minimum(z, depth - 1), axis=1) for z in zs]
+    columns = [[slab.take(np.minimum(x, width - 1), axis=3) for x in xs] for slab in slabs]
+    output = np.zeros((values.shape[0], len(gz), len(gy), len(gx)), dtype=np.float64)
+    term = np.empty_like(output)
+    # Same corner order as ``_sample``: z outermost, x fastest.
+    for cz, cy, cx in itertools.product((0, 1), repeat=3):
+        weight = wx[cx] * wy[cy] * wz[cz]
+        inside = ((xs[cx] < width)[None, None, :] & (ys[cy] < height)[None, :, None]) & (
+            zs[cz] < depth
+        )[:, None, None]
+        gathered = columns[cz][cx].take(np.minimum(ys[cy], height - 1), axis=2)
+        # float32 times float64 is evaluated in float64, as the widened gather was;
+        # corners outside the volume contribute +0.0 as in ``_sample``.
+        np.multiply(gathered, weight, out=term)
+        if not inside.all():
+            np.copyto(term, 0.0, where=~inside)
+        output += term
+    return output
+
+
 def _affine_resample(
     image: RealArray,
     xform: DoubleArray,
@@ -338,6 +291,12 @@ def _affine_resample(
     # Below 400 multiply-adds Torch's bmm uses its naive kernel, which accumulates the
     # coordinates in a different order than the fused path below.
     small = 4 * depth * height * width * 3 < 400
+    # With no rotation or shear each coordinate depends on one output axis, so the
+    # fused path's coordinates reduce to 1D vectors (the zero terms add only signed
+    # zeros, which ``_source_index`` maps to the same index).
+    separable = not small and all(
+        theta[row, column] == 0 for row in range(3) for column in range(3) if row != column
+    )
     values = np.ascontiguousarray(image, dtype=np.float32).reshape(image.shape[0], -1)
     channels = 1 if channel_argmax else image.shape[0]
     output = np.empty((channels, depth, height, width), dtype=np.float32)
@@ -346,6 +305,22 @@ def _affine_resample(
     def resample_block(start: int) -> None:
         """Resample one disjoint block of output voxels."""
         block = base_d[start : start + rows]
+        if separable:
+            parts = [
+                (
+                    fma(block[:, None], row[2], base_w[None, :] * row[0]),
+                    fma(1.0, row[3], base_h * row[1]),
+                )
+                for row in theta[:3]
+            ]
+            gx = parts[0][0][0] + parts[0][1][0]
+            gy = parts[1][0][0, 0] + parts[1][1]
+            gz = parts[2][0][:, 0] + parts[2][1][0]
+            sampled = _sample_separable(values, source_size, gx, gy, gz).astype(np.float32)
+            output[:, start : start + len(block)] = (
+                np.argmax(sampled, axis=0)[None] if channel_argmax else sampled
+            )
+            return
         grid: list[DoubleArray] = []
         for row in theta[:3]:
             if small:
@@ -446,19 +421,34 @@ def _orientation[T: np.bool_ | np.integer | np.floating](
 # --- bundle pipeline ----------------------------------------------------------------
 
 
-def scale_intensity_range(image: RealArray) -> FloatArray:
-    """Map -175..250 HU linearly to 0..1 in float32; values outside saturate at 0 and 1."""
-    scaled = (image - np.float32(A_MIN)) / np.float32(A_MAX - A_MIN)
-    scaled = scaled * np.float32(B_MAX - B_MIN) + np.float32(B_MIN)
-    return np.clip(scaled, np.float32(B_MIN), np.float32(B_MAX)).astype(np.float32)
+def reader_affine(volume: Volume[np.float32]) -> DoubleArray:
+    """The affine MONAI's nibabel reader continues with after its header correction.
+
+    The volume's spatial unit must be mm or unspecified (``medmlx.run`` rejects other
+    units), so its fields are the header's own values, as MONAI reads them.
+    """
+
+    # NIfTI-1 stores its fields as float32 and NIfTI-2 as float64.
+    header_float = np.float64 if volume.header["pixdim"].dtype == np.float64 else np.float32
+    affine, _ = core_transforms.correct_nifti_header(
+        volume.affine,
+        volume.zooms,
+        volume.sform,
+        volume.sform_code,
+        volume.qform,
+        volume.qform_code,
+        header_float=header_float,
+    )
+    return affine
 
 
-def preprocess(data: HostArray, affine: DoubleArray) -> tuple[FloatArray, Geometry]:
+def preprocess(data: FloatArray, affine: DoubleArray) -> tuple[FloatArray, Geometry]:
     """Bundle preprocessing of one 3D volume; returns ``1xXxYxZ`` float32 network input.
 
     Args:
-        data: Voxel values in Hounsfield units, in the reader's storage order ``(X, Y, Z)``.
-        affine: The reader's 4x4 voxel-to-world affine (after header correction).
+        data: Float32 voxel values in Hounsfield units, in the reader's storage order
+            ``(X, Y, Z)``.
+        affine: The reader's 4x4 voxel-to-world affine (``reader_affine``).
 
     Returns:
         The volume reoriented to RAS, bilinearly resampled to 1 mm spacing and scaled to
@@ -468,21 +458,12 @@ def preprocess(data: HostArray, affine: DoubleArray) -> tuple[FloatArray, Geomet
     """
 
     original_affine = np.array(affine, dtype=np.float64, copy=True)
-    image = np.asarray(data, dtype=np.float32)[None]
+    image = data[None]
     original_shape = cast(tuple[int, int, int], tuple(int(value) for value in image.shape[1:]))
-    image, oriented_affine = _orientation(image, original_affine, AXCODES)
+    image, oriented_affine = core_transforms.orient(image, original_affine, AXCODES)
     oriented_shape = cast(tuple[int, int, int], tuple(int(value) for value in image.shape[1:]))
-    out_d = np.array(PIXDIM, dtype=np.float64)
-    for index, current in enumerate(affine_to_spacing(oriented_affine)):
-        target = out_d[index]
-        if not (target - AFFINE_TOL) <= current <= (target + AFFINE_TOL):
-            current = target
-        out_d[index] = current
-    target_affine = zoom_affine(oriented_affine, out_d)
-    shape, offset = compute_shape_offset(oriented_shape, oriented_affine, target_affine)
-    target_affine[:3, -1] = offset[:3]
-    network_shape = cast(tuple[int, int, int], tuple(int(value) for value in shape))
-    image, network_affine = spatial_resample(image, oriented_affine, target_affine, network_shape)
+    image, network_affine = core_transforms.spacing(image, oriented_affine, PIXDIM)
+    network_shape = cast(tuple[int, int, int], tuple(int(value) for value in image.shape[1:]))
     geometry = Geometry(
         original_affine=original_affine,
         original_shape=original_shape,
@@ -491,7 +472,8 @@ def preprocess(data: HostArray, affine: DoubleArray) -> tuple[FloatArray, Geomet
         network_affine=network_affine,
         network_shape=network_shape,
     )
-    return scale_intensity_range(image), geometry
+    scaled = core_transforms.scale_intensity_range(image, A_MIN, A_MAX, B_MIN, B_MAX)
+    return scaled, geometry
 
 
 def _fma32(a: ArrayLike, b: ArrayLike, c: ArrayLike) -> FloatArray:

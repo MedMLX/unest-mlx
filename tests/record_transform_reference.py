@@ -16,7 +16,9 @@ from typing import Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
+from medmlx_core.typing import HostArray
 
+from tests._contracts import NiftiIo
 from tests.fixture_cases import (
     HEADER_CASES,
     RUNNER_CASES,
@@ -29,7 +31,6 @@ from tests.fixture_cases import (
     write_header_case,
     write_runner_case,
 )
-from unest_mlx._typing import HostArray, NiftiIo
 from unest_mlx.mlx_weights import required_shapes
 
 REVISION = "55fc1da849a70ed35d2900561429c042a86d65de"
