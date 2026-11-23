@@ -3,13 +3,12 @@
 from typing import cast
 
 import pytest
-
-from unest_mlx._typing import NativeRuntime
+from medmlx_core.typing import MlxRuntime
 
 
 @pytest.fixture(scope="session")
-def mx() -> NativeRuntime:
+def mx() -> MlxRuntime:
     """Provide the explicitly admitted native MLX runtime."""
     from medmlx_core.runtime import import_mlx
 
-    return cast(NativeRuntime, import_mlx())
+    return cast(MlxRuntime, import_mlx())

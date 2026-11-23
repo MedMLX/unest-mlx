@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from medmlx_core.typing import HostArray, MlxRuntime
+
 from unest_mlx._typing import (
     FloatArray,
-    HostArray,
     NativeNetwork,
-    NativeRuntime,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ class UNesTPredictor:
     network_label = "UNesT"
 
     def __init__(
-        self, network: NativeNetwork, *, mx: NativeRuntime, sw_batch_size: int = 4
+        self, network: NativeNetwork, *, mx: MlxRuntime, sw_batch_size: int = 4
     ) -> None:
         """Validate sliding-window controls and initialize the native predictor."""
         if (

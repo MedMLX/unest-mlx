@@ -6,8 +6,9 @@ from typing import cast
 import nibabel as nib_runtime
 import numpy as np
 import pytest
+from medmlx_core.volumes import read_volume, write_volume
 
-from tests._contracts import RecordedTransforms
+from tests._contracts import NiftiIo, RecordedTransforms
 from tests.fixture_cases import (
     HEADER_CASES,
     RUNNER_CASES,
@@ -16,12 +17,12 @@ from tests.fixture_cases import (
     write_header_case,
     write_runner_case,
 )
-from unest_mlx import medmlx, transforms
-from unest_mlx._typing import DoubleArray, HostArray, NiftiIo
+from unest_mlx import transforms
+from unest_mlx._typing import DoubleArray, FloatArray
 
 nib = cast(NiftiIo, nib_runtime)
 
-Case = tuple[DoubleArray, HostArray, RecordedTransforms]
+Case = tuple[DoubleArray, FloatArray, RecordedTransforms]
 
 # --- bundle transforms ---------------------------------------------------------------
 
@@ -40,12 +41,12 @@ def case(request: pytest.FixtureRequest, tmp_path: Path) -> Case:
         write_runner_case(request.param, path)
     else:
         write_header_case(request.param, path)
-    image, data = medmlx.read_volume(path)
-    assert np.array_equal(data, expected["input_data"])
-    assert np.array_equal(image.affine, expected["input_affine"])
-    affine = transforms.correct_nifti_header_if_necessary(image).affine
+    volume = read_volume(path)
+    assert np.array_equal(volume.data, expected["input_data"])
+    assert np.array_equal(volume.affine, expected["input_affine"])
+    affine = transforms.reader_affine(volume)
     assert np.array_equal(affine, expected["reader_affine"])
-    return affine, data, cast(RecordedTransforms, expected)
+    return affine, volume.data, cast(RecordedTransforms, expected)
 
 
 def test_preprocessing_matches_monai_bitwise(case: Case) -> None:
@@ -77,7 +78,7 @@ def test_writer_matches_upstream_saved_data_and_grid(case: Case, tmp_path: Path)
     """Compare saved image data and geometry with the upstream recording."""
     _, _, expected = case
     path = tmp_path / "mask.nii.gz"
-    medmlx.write_mask(path, expected["labels"], expected["reader_affine"])
+    write_volume(path, expected["labels"], expected["reader_affine"], dtype=np.float32)
     image = nib.load(str(path))
     assert np.array_equal(np.asanyarray(image.dataobj), expected["saved"])
     assert np.array_equal(image.affine, expected["saved_affine"])

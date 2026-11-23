@@ -17,28 +17,17 @@ import time
 from pathlib import Path
 from typing import cast
 
-import nibabel as nib_runtime
 import numpy as np
-from medmlx_core.errors import AssetNotReadyError, InvalidInputError, ModelExecutionError
+from medmlx_core.errors import InvalidInputError, ModelExecutionError
 from medmlx_core.files import output_targets, publish
 from medmlx_core.outputs import artifact
 from medmlx_core.runtime import import_mlx
-from medmlx_core.weights import model_folder, weights_revision
-from nibabel.filebasedimages import ImageFileError
+from medmlx_core.transforms import axis_codes
+from medmlx_core.typing import MlxRuntime
+from medmlx_core.volumes import read_volume, write_volume
+from medmlx_core.weights import load_tensors, weights_file, weights_revision
 
-from unest_mlx._typing import (
-    DoubleArray,
-    FloatArray,
-    HostArray,
-    Label,
-    NativeNetwork,
-    NativeRuntime,
-    NiftiImage,
-    NiftiIo,
-    RunResult,
-)
-
-nib = cast(NiftiIo, nib_runtime)
+from unest_mlx._typing import Label, NativeNetwork, RunResult
 
 OUTPUT_NAME = "mask.nii.gz"
 # The bundle's configs/metadata.json network_data_format.outputs.pred.channel_def.
@@ -65,9 +54,6 @@ MODEL = {
 # configs/inference.json: SlidingWindowInferer(roi_size=[96, 96, 96], sw_batch_size=4,
 # overlap=0.5). The roi size and overlap are fixed in UNesTPredictor.
 SW_BATCH_SIZE = 4
-_WEIGHTS_HINT = (
-    "Download unest.safetensors from https://huggingface.co/MedMLX/unest-renal-ct-mlx"
-)
 
 
 def run(
@@ -108,8 +94,10 @@ def run(
 
     Raises:
         InvalidInputError: The image is missing, not a finite 3D NIfTI with a valid
-            affine, ``overwrite`` is not a bool, ``output_dir`` is not a directory, or the
-            mask exists and ``overwrite`` is false.
+            affine and float32-range voxels (``medmlx_core.volumes.read_volume``), has a
+            spatial unit other than mm or unspecified, ``overwrite`` is not a bool,
+            ``output_dir`` is not a directory, or the mask exists and ``overwrite`` is
+            false.
         AssetNotReadyError: ``weights_path`` is not a folder, or its
             ``unest.safetensors`` is missing, unreadable or does not match the released
             tensor inventory.
@@ -126,13 +114,17 @@ def run(
     mask_path = output_targets(
         output_dir, {"mask": OUTPUT_NAME}, overwrite=overwrite, inputs=[source]
     )["mask"]
-    weights = _require_weights(model_folder("unest", weights_path) / "unest.safetensors")
+    weights = weights_file("unest", weights_path, "unest.safetensors")
     from unest_mlx import transforms
 
-    image, data = read_volume(source)
-    reader_affine = transforms.correct_nifti_header_if_necessary(image).affine
-    network_input, geometry = transforms.preprocess(data, reader_affine)
-    mx = cast(NativeRuntime, import_mlx())
+    volume = read_volume(source)
+    # The bundle treats affine coordinates as mm and does not convert NIfTI units.
+    if (int(volume.header["xyzt_units"]) & 0x07) not in (0, 2):
+        raise InvalidInputError("image_path spatial units must be mm or unspecified")
+    reader_affine = transforms.reader_affine(volume)
+    network_input, geometry = transforms.preprocess(volume.data, reader_affine)
+    del volume
+    mx = cast(MlxRuntime, import_mlx())
     from unest_mlx.mlx_predictor import UNesTPredictor
 
     network = _load_network(weights, mx=mx)
@@ -158,7 +150,14 @@ def run(
         raise ModelExecutionError("UNesT mask does not match the input grid")
     if not set(np.unique(labels).tolist()) <= {label["value"] for label in LABELS}:
         raise ModelExecutionError("UNesT exported labels outside the bundle contract")
-    publish({mask_path: lambda partial: write_mask(partial, labels, reader_affine)})
+    # Like MONAI's NibabelWriter: float32 labels, sform and qform code 1, mm units.
+    publish(
+        {
+            mask_path: lambda partial: write_volume(
+                partial, labels, reader_affine, dtype=np.float32
+            )
+        }
+    )
     return {
         "outputs": {"mask": mask_path.resolve().as_posix()},
         "artifacts": {
@@ -178,7 +177,7 @@ def run(
             },
             "shape": [int(value) for value in labels.shape],
             "dtype": "float32",
-            "input_orientation": "".join(nib.aff2axcodes(reader_affine)),
+            "input_orientation": axis_codes(reader_affine),
             "network_shape": [int(value) for value in geometry.network_shape],
             "sliding_window": {
                 "roi_size": [96, 96, 96],
@@ -201,116 +200,13 @@ def _require_nifti(path: str | os.PathLike[str]) -> Path:
     return source
 
 
-def _require_weights(path: str | os.PathLike[str]) -> Path:
-    """Validate the native safetensors checkpoint path without resolving symlinks."""
-    weights = Path(path).expanduser().absolute()
-    if not weights.is_file():
-        raise AssetNotReadyError(
-            f"UNesT weights not found: {weights}; expected a .safetensors file",
-            reason=f"missing {weights}",
-            hint=_WEIGHTS_HINT,
-        )
-    if weights.suffix != ".safetensors":
-        raise AssetNotReadyError(
-            f"UNesT weights must be a .safetensors file, got {weights.name}",
-            reason=f"unconverted {weights.name}",
-            hint=_WEIGHTS_HINT,
-        )
-    return weights
-
-
-def read_volume(path: Path) -> tuple[NiftiImage, HostArray]:
-    """Read real finite 3D NIfTI voxels in the float32 range on a millimetre grid.
-
-    The array is ``np.asanyarray(image.dataobj)`` in file axis order, with the header's
-    slope and intercept applied. Which affine (sform or qform) defines the grid is decided
-    later by ``transforms.correct_nifti_header_if_necessary``, as in the upstream reader.
-
-    Raises:
-        InvalidInputError: The file or spatial units are invalid, voxels are not real
-            finite float32-range values, the affine is non-finite or singular, or header
-            spacing is not finite and positive.
-    """
-
-    try:
-        image = nib.load(path.as_posix())
-        data = np.asanyarray(image.dataobj)
-    except (OSError, ValueError, ImageFileError) as error:
-        raise InvalidInputError(f"Invalid UNesT input NIfTI: {path}") from error
-    if not isinstance(image, nib_runtime.Nifti1Image | nib_runtime.Nifti2Image):
-        raise InvalidInputError(f"UNesT input must be NIfTI: {path}")
-    # The bundle treats affine coordinates as mm and does not convert NIfTI units.
-    if (int(image.header["xyzt_units"]) & 0x07) not in (0, 2):
-        raise InvalidInputError("UNesT input spatial units must be mm or unspecified")
-    if data.ndim != 3:
-        raise InvalidInputError(f"UNesT input must be a 3D NIfTI; got shape {data.shape}")
-    if not np.issubdtype(data.dtype, np.number) or np.iscomplexobj(data):
-        raise InvalidInputError("UNesT input must contain real-valued voxels")
-    if not np.all(np.isfinite(data)):
-        raise InvalidInputError("UNesT input contains non-finite voxels")
-    limit = np.finfo(np.float32).max
-    if np.any(data > limit) or np.any(data < -limit):
-        raise InvalidInputError("UNesT input contains voxels outside the finite float32 range")
-    affine = np.asarray(image.affine, dtype=np.float64)
-    if affine.shape != (4, 4) or not np.all(np.isfinite(affine)):
-        raise InvalidInputError("UNesT input affine must be a finite 4x4 matrix")
-    if np.linalg.det(affine[:3, :3]) == 0:
-        raise InvalidInputError("UNesT input affine must be invertible")
-    spacing = np.asarray(image.header.get_zooms()[:3], dtype=np.float64)
-    if not np.all(np.isfinite(spacing)) or np.any(spacing <= 0.0):
-        raise InvalidInputError("UNesT input spacing_mm values must be finite and positive")
-    return cast(NiftiImage, image), data
-
-
-def _load_network(path: Path, *, mx: NativeRuntime) -> NativeNetwork:
-    """Load ``path``, validate it against the released inventory and build the MLX network.
-
-    Any read or inventory failure is reported as ``AssetNotReadyError``.
-    """
+def _load_network(path: Path, *, mx: MlxRuntime) -> NativeNetwork:
+    """Load ``path``, check it against the released inventory and build the MLX network."""
 
     from unest_mlx import mlx_weights
     from unest_mlx.mlx_model import UNesT
 
-    try:
-        loaded = mx.load(str(path))
-    except (OSError, RuntimeError, ValueError) as error:
-        raise AssetNotReadyError(
-            f"Cannot read UNesT weights {path}: {error}",
-            reason=f"unreadable {path.name}",
-            hint=_WEIGHTS_HINT,
-        ) from error
-    if not isinstance(loaded, dict):
-        raise AssetNotReadyError(
-            f"UNesT weights are not a tensor mapping: {path}",
-            reason=f"unreadable {path.name}",
-            hint=_WEIGHTS_HINT,
-        )
-    try:
-        state = {str(key): value for key, value in loaded.items()}
-        weights = mlx_weights.validate_native_weights(state, mx=mx)
-    except (InvalidInputError, RuntimeError, TypeError, ValueError) as error:
-        raise AssetNotReadyError(
-            f"UNesT weights do not match the released 0.2.7 checkpoint: {error}",
-            reason=f"mismatched {path.name}",
-            hint=_WEIGHTS_HINT,
-        ) from error
+    weights = load_tensors(
+        path, model_id="unest", label="UNesT", shapes=mlx_weights.required_shapes()
+    )
     return UNesT(weights, mx=mx)
-
-
-def write_mask(path: Path, labels: FloatArray, affine: DoubleArray) -> None:
-    """Write a label map like MONAI's ``NibabelWriter``.
-
-    The runner calls this on a private staging path (see ``medmlx_core.files.publish``),
-    because NiBabel follows links when opening its destination.
-
-    Args:
-        path: Destination for the gzip-compressed NIfTI.
-        labels: Label values on the reader grid, stored as float32.
-        affine: 4x4 voxel-to-world affine in mm, written as sform and qform with code 1.
-    """
-
-    image = nib.Nifti1Image(np.asarray(labels, dtype=np.float32), affine)
-    image.header["xyzt_units"] = 2  # NIfTI millimetres; the mask has no time axis.
-    image.set_sform(affine, code=1)
-    image.set_qform(affine, code=1)
-    nib.save(image, path)

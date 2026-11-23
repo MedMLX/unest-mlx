@@ -11,10 +11,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from medmlx_core.typing import HostArray
 from numpy.lib.npyio import NpzFile
 
-from tests._contracts import CommonMetadata, RunnerCase, SourceManifest
-from unest_mlx._typing import DoubleArray, FloatArray, HostArray, NiftiImage, NiftiIo
+from tests._contracts import CommonMetadata, NiftiImage, NiftiIo, RunnerCase, SourceManifest
+from unest_mlx._typing import DoubleArray, FloatArray
 
 if TYPE_CHECKING:
     from mlx.core import array

@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
-from unest_mlx._typing import NativeRuntime, NeuralRuntime
+from medmlx_core.typing import MlxRuntime, NeuralRuntime
 
 if TYPE_CHECKING:
     from mlx.core import array
@@ -41,7 +41,7 @@ class UNesT:
         mx: MLX runtime from ``medmlx_core.runtime.import_mlx()``.
     """
 
-    def __init__(self, weights: Mapping[str, array], *, mx: NativeRuntime) -> None:
+    def __init__(self, weights: Mapping[str, array], *, mx: MlxRuntime) -> None:
         """Initialize the native UNesT graph with admitted weights."""
         self.weights = weights
         self.mx = mx
