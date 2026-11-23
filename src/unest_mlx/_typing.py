@@ -8,14 +8,13 @@ from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, ove
 
 import numpy as np
 from medmlx_core.outputs import RunResult as _RunResult
-from medmlx_core.typing import MlxRuntime
+from medmlx_core.typing import HostArray, MlxRuntime
 from numpy.typing import ArrayLike, NDArray
 
 if TYPE_CHECKING:
     from mlx.core import array
 
 
-type HostArray = NDArray[np.generic]
 type RealArray = NDArray[np.bool_ | np.integer | np.floating]
 type FloatArray = NDArray[np.float32]
 type DoubleArray = NDArray[np.float64]
@@ -65,24 +64,6 @@ class NeuralRuntime(Protocol):
     def gelu(self, x: array) -> array:
         """Apply GELU activation."""
         ...
-
-
-class SlidingWindow(Protocol):
-    def __call__(
-        self,
-        inputs: FloatArray,
-        *,
-        roi_size: tuple[int, int, int],
-        sw_batch_size: int,
-        predictor: NativeNetwork,
-        overlap: float,
-    ) -> FloatArray:
-        """Run sliding-window inference and return host output scores."""
-        ...
-
-
-class SlidingWindowNamespace(Protocol):
-    sliding_window_inference: SlidingWindow
 
 
 class NiftiHeader(Protocol):

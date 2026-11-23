@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from importlib import import_module
 from typing import TYPE_CHECKING, cast
 
 from unest_mlx._typing import (
@@ -10,7 +9,6 @@ from unest_mlx._typing import (
     HostArray,
     NativeNetwork,
     NativeRuntime,
-    SlidingWindowNamespace,
 )
 
 if TYPE_CHECKING:
@@ -87,9 +85,9 @@ class UNesTPredictor:
             raise InvalidInputError("UNesT input must have shape Bx1xDxHxW")
         if host.dtype != np.float32 or not np.isfinite(host).all():
             raise InvalidInputError(f"{self.network_label} input must be finite float32")
-        sliding = cast(SlidingWindowNamespace, import_module("medmlx_core.sliding_window"))
+        from medmlx_core.sliding_window import sliding_window_inference
 
-        return sliding.sliding_window_inference(
+        return sliding_window_inference(
             cast(FloatArray, host),
             roi_size=(96, 96, 96),
             sw_batch_size=self.sw_batch_size,
