@@ -13,8 +13,6 @@ Segment kidney cortex, medulla and collecting system in contrast-enhanced CT wit
 
 <img src="https://raw.githubusercontent.com/MedMLX/unest-mlx/main/docs/showcase.png" alt="Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view." width="100%">
 
-*Contrast CT → kidney cortex, medulla and collecting system, with a detailed renal view.*
-
 </div>
 
 | Input | Output |
@@ -42,8 +40,9 @@ result = run(image_path="ct.nii.gz", output_dir="out")
 print(result["outputs"]["mask"])
 ```
 
-Weights download from `MedMLX/unest-renal-ct-mlx` on first use. Use `medmlx setup unest` to download ahead of time. To use your own copy,
-pass the folder containing `unest.safetensors` as `weights_path`.
+Weights download from `MedMLX/unest-renal-ct-mlx` on first use; `medmlx setup unest`
+downloads them ahead of time. For local weights, pass the folder containing
+`unest.safetensors` as `weights_path`.
 
 ### Inputs and outputs
 
@@ -56,9 +55,9 @@ pass the folder containing `unest.safetensors` as `weights_path`.
 | `sw_batch_size` | Windows per network call, 4 by default; fewer lower peak memory |
 
 - **Input:** arterial or portal-venous contrast-enhanced CT. On the non-contrast scans
-  we tried, the kidneys were missed. Spatial units must be millimetres or unspecified;
-  metres and microns are not converted.
-- **Mask:** float32 labels on the input grid as the NIfTI reader corrects it:
+  we tried, the kidneys were missed. Spatial units must be millimeters or unspecified;
+  meters and microns are not converted.
+- **Mask:** float32 labels on the input grid as the reader interprets its header:
 
   | Label | Structure |
   | ---: | :--- |
@@ -89,9 +88,8 @@ volume = np.zeros((1, 1, 96, 96, 96), dtype=np.float32)  # preprocessed CT, Bx1x
 logits = predictor(volume)  # NumPy float32, Bx4xDxHxW
 ```
 
-- `UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant blending;
-  `sw_batch_size` defaults to four.
-- Inference requires Apple Silicon with Metal.
+`UNesTPredictor` uses the upstream 96³ windows with overlap 0.5 and constant blending;
+`sw_batch_size` defaults to four.
 
 ## Use with MedMLX
 
