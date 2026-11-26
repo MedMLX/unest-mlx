@@ -55,8 +55,8 @@ downloads them ahead of time. For local weights, pass the folder containing
 | `sw_batch_size` | Windows per network call, 4 by default; fewer lower peak memory |
 
 - **Input:** arterial or portal-venous contrast-enhanced CT. On the non-contrast scans
-  we tried, the kidneys were missed. Spatial units must be millimeters or unspecified;
-  meters and microns are not converted.
+  we tried, the kidneys were missed. Meter and micron spatial units are converted to
+  millimeters; unspecified is taken as millimeters.
 - **Mask:** float32 labels on the input grid as the reader interprets its header:
 
   | Label | Structure |

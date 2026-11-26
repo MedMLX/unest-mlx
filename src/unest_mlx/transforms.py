@@ -424,8 +424,8 @@ def _orientation[T: np.bool_ | np.integer | np.floating](
 def reader_affine(volume: Volume[np.float32]) -> DoubleArray:
     """The affine MONAI's nibabel reader continues with after its header correction.
 
-    The volume's spatial unit must be mm or unspecified (``medmlx.run`` rejects other
-    units), so its fields are the header's own values, as MONAI reads them.
+    ``read_volume`` has converted meter and micron headers to millimeters, so the
+    fields are the header's values in mm, as MONAI reads an mm header.
     """
 
     # NIfTI-1 stores its fields as float32 and NIfTI-2 as float64.

@@ -75,7 +75,7 @@ def run(
     Args:
         image_path: 3D CT NIfTI (``.nii`` or ``.nii.gz``) in Hounsfield units, with
             contrast enhancement. Header slope and intercept are applied on read.
-            Spatial units must be mm or unspecified (assumed mm).
+            Meter and micron spatial units are converted to mm; unspecified is taken as mm.
         weights_path: Optional model folder containing ``unest.safetensors``.
             Omit to download and reuse ``MedMLX/unest-renal-ct-mlx`` automatically.
         output_dir: Directory for ``mask.nii.gz``; created when the mask is written.
@@ -94,8 +94,8 @@ def run(
 
     Raises:
         InvalidInputError: The image is missing, not a finite 3D NIfTI with a valid
-            affine and float32-range voxels (``medmlx_core.volumes.read_volume``), has a
-            spatial unit other than mm or unspecified, ``overwrite`` is not a bool,
+            affine and float32-range voxels (``medmlx_core.volumes.read_volume``), has an
+            unknown spatial unit, ``overwrite`` is not a bool,
             ``output_dir`` is not a directory, or the mask exists and ``overwrite`` is
             false.
         AssetNotReadyError: ``weights_path`` is not a folder, or its
@@ -118,9 +118,6 @@ def run(
     from unest_mlx import transforms
 
     volume = read_volume(source)
-    # The bundle treats affine coordinates as mm and does not convert NIfTI units.
-    if (int(volume.header["xyzt_units"]) & 0x07) not in (0, 2):
-        raise InvalidInputError("image_path spatial units must be mm or unspecified")
     reader_affine = transforms.reader_affine(volume)
     network_input, geometry = transforms.preprocess(volume.data, reader_affine)
     del volume

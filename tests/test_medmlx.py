@@ -58,6 +58,42 @@ def test_run_matches_upstream_pipeline_bitwise(
         assert fixture["saved_codes"].tolist() == [1, 1]
 
 
+@pytest.mark.mlx
+@pytest.mark.parametrize(("unit", "scale"), [("meter", 1e-3), ("micron", 1e3)])
+def test_run_converts_meter_and_micron_headers_to_millimeters(
+    tmp_path: Path, mx: MlxRuntime, monkeypatch: pytest.MonkeyPatch, unit: str, scale: float,
+) -> None:
+    """A copy of the CT in meters or microns gives the millimeter mask and its mm geometry."""
+    weights = runner_weights(mlx_weights.required_shapes())
+    checkpoint = tmp_path / "weights" / "unest.safetensors"
+    checkpoint.parent.mkdir()
+    mx.save_safetensors(str(checkpoint), {key: mx.array(value) for key, value in weights.items()})
+    shapes = {key: value.shape for key, value in weights.items()}
+    monkeypatch.setattr(mlx_weights, "required_shapes", lambda: dict(shapes))
+    millimeter = tmp_path / "ct_mm.nii.gz"
+    write_ct_crop(millimeter)
+    source = nib.load(millimeter)
+    affine = source.affine.copy()
+    affine[:3] *= scale
+    converted = nib.Nifti1Image(np.asanyarray(source.dataobj), affine)
+    converted.set_qform(affine, code=1)
+    converted.set_sform(affine, code=1)
+    converted.header.set_xyzt_units(unit)
+    other = tmp_path / f"ct_{unit}.nii.gz"
+    nib.save(converted, other)
+    masks = [
+        nib.load(
+            medmlx.run(
+                image_path=path, weights_path=checkpoint.parent, output_dir=tmp_path / name
+            )["outputs"]["mask"]
+        )
+        for path, name in ((millimeter, "mm"), (other, unit))
+    ]
+    assert np.array_equal(np.asanyarray(masks[0].dataobj), np.asanyarray(masks[1].dataobj))
+    assert np.allclose(masks[0].affine, masks[1].affine, rtol=0.0, atol=1e-4)
+    assert np.allclose(masks[1].affine, source.affine, rtol=0.0, atol=1e-4)
+
+
 @pytest.mark.parametrize(
     "problem", ["bad_suffix", "non_bool_overwrite", "existing_output", "dangling_output",
                 "zero_batch", "bool_batch"]

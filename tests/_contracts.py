@@ -116,6 +116,9 @@ class NiftiHeader(Protocol):
     def set_slope_inter(self, slope: float, inter: float) -> None:
         """Set stored-data scaling slope and intercept."""
         ...
+    def set_xyzt_units(self, xyz: str) -> None:
+        """Set the spatial unit by name."""
+        ...
 
 
 class NiftiImage(Protocol):
